@@ -1,7 +1,9 @@
 name: docker
 on:
-  release:
-    types: [published]
+  workflow_dispatch: {}
+  push:
+    branches:
+      - "coreweave"
 jobs:
   multi:
     runs-on: ubuntu-latest
@@ -9,6 +11,8 @@ jobs:
       -
         name: Checkout
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
       -
         name: Set up QEMU
         uses: docker/setup-qemu-action@v1
@@ -16,11 +20,23 @@ jobs:
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
       -
-        name: Login to DockerHub
-        uses: docker/login-action@v1
+        name: Log into registry ghcr.io
+        uses: docker/login-action@v3.3.0
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - 
+        name: Get tag
+        id: get_tag
+        run: |
+          git remote add upstream https://github.com/peak/s5cmd.git
+          git fetch --tags upstream
+          VERSION=$(git describe --tags --exclude '*-' --abbrev=0)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "short_sha=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_OUTPUT
       -
         name: Build and push
         uses: docker/build-push-action@v2
@@ -30,5 +46,6 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/arm/v6,linux/arm/v7,linux/386
           tags: |
-            peakcom/s5cmd:latest
-            peakcom/s5cmd:${{ github.event.release.tag_name }}
+            ghcr.io/coreweave/s5cmd:latest
+            ghcr.io/coreweave/s5cmd:${{ steps.get_tag.outputs.version }}-${{ steps.get_tag.outputs.short_sha }}
+
