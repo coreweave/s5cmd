@@ -1,7 +1,8 @@
 name: goreleaser
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 jobs:
   caios_test:
     name: caios-test

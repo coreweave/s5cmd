@@ -50,18 +50,6 @@ changelog:
       - Merge pull request
       - Merge branch
 
-brews:
-  - tap:
-      owner: peak
-      name: homebrew-tap
-    folder: Formula
-    name: s5cmd
-    description: Parallel S3 and local filesystem execution tool
-    homepage: https://github.com/peak/s5cmd
-    license: MIT
-    test: |
-      system "#{bin}/s5cmd version"
-
 nfpms:
   -
     vendor: Peak
