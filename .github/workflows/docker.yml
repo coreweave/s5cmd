@@ -1,9 +1,7 @@
 name: docker
 on:
-  workflow_dispatch: {}
-  push:
-    branches:
-      - "coreweave"
+  release:
+    types: [published]
 jobs:
   multi:
     runs-on: ubuntu-latest
