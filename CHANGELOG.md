@@ -1,4 +1,9 @@
 # Changelog
+## Unreleased
+
+#### Improvements
+- Upgraded aws-sdk-go to v1.55.5. This relaxes the container credentials provider host check so that an HTTPS `AWS_CONTAINER_CREDENTIALS_FULL_URI` (e.g. CoreWeave CAIOS `https://api.coreweave.com/...`) is no longer rejected with `invalid endpoint host ... only loopback hosts are allowed`. The loopback/ECS/EKS host restriction still applies to plain-`http` endpoints. (mirrors upstream [#769](https://github.com/peak/s5cmd/pull/769))
+
 ## v2.3.0 - 16 Dec 2024
 
 #### Breaking changes
