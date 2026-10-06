@@ -78,6 +78,7 @@ package processcreds
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -180,6 +181,10 @@ type ProcessProvider struct {
 
 	// Timeout limits the time a process can run.
 	Timeout time.Duration
+
+	// SanitizeErrors suppresses process stderr and excludes process output and
+	// underlying errors from retrieval diagnostics, which can contain credentials.
+	SanitizeErrors bool
 }
 
 // NewCredentials returns a pointer to a new Credentials object wrapping the
@@ -256,9 +261,15 @@ func (p *ProcessProvider) Retrieve() (credentials.Value, error) {
 	// Serialize and validate response
 	resp := &CredentialProcessResponse{}
 	if err = json.Unmarshal(out, resp); err != nil {
+		message := errMsgProcessProviderParse
+		if p.SanitizeErrors {
+			err = nil
+		} else {
+			message = fmt.Sprintf("%s: %s", message, string(out))
+		}
 		return credentials.Value{ProviderName: ProviderName}, awserr.New(
 			ErrCodeProcessProviderParse,
-			fmt.Sprintf("%s: %s", errMsgProcessProviderParse, string(out)),
+			message,
 			err)
 	}
 
@@ -346,6 +357,9 @@ func (p *ProcessProvider) executeCredentialProcess() ([]byte, error) {
 	if err := p.prepareCommand(); err != nil {
 		return nil, err
 	}
+	if p.SanitizeErrors {
+		return p.executeSanitizedCredentialProcess()
+	}
 
 	// Setup the pipes
 	outReadPipe, outWritePipe, err := os.Pipe()
@@ -404,6 +418,45 @@ func (p *ProcessProvider) executeCredentialProcess() ([]byte, error) {
 		out = []byte(strings.Replace(string(out), `\"`, `"`, -1))
 	}
 
+	return out, nil
+}
+
+// boundedBuffer rejects oversized output instead of accepting a truncated JSON
+// response, which could hide trailing data or a failed credential process.
+type boundedBuffer struct {
+	buffer  bytes.Buffer
+	maxSize int
+}
+
+func (b *boundedBuffer) Write(data []byte) (int, error) {
+	if len(data) > b.maxSize-b.buffer.Len() {
+		return 0, io.ErrShortBuffer
+	}
+	return b.buffer.Write(data)
+}
+
+func (p *ProcessProvider) executeSanitizedCredentialProcess() ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, p.command.Path, p.command.Args[1:]...)
+	cmd.Env = p.command.Env
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = io.Discard
+	// Bound pipe cleanup if a descendant keeps stdout open after the process exits.
+	cmd.WaitDelay = time.Second
+	output := &boundedBuffer{maxSize: p.MaxBufSize}
+	cmd.Stdout = output
+	if err := cmd.Run(); err != nil {
+		message := errMsgProcessProviderProcess
+		if ctx.Err() != nil {
+			message = errMsgProcessProviderTimeout
+		}
+		return nil, awserr.New(ErrCodeProcessProviderExecution, message, nil)
+	}
+	out := output.buffer.Bytes()
+	if runtime.GOOS == "windows" {
+		out = []byte(strings.Replace(string(out), `\"`, `"`, -1))
+	}
 	return out, nil
 }
 

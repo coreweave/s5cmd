@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/processcreds"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -1248,7 +1249,7 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	if opts.NoSignRequest {
 		// do not sign requests when making service API calls
 		awsCfg = awsCfg.WithCredentials(credentials.AnonymousCredentials)
-	} else if opts.CredentialFile != "" || opts.Profile != "" {
+	} else if opts.CredentialFile != "" {
 		awsCfg = awsCfg.WithCredentials(
 			credentials.NewSharedCredentials(opts.CredentialFile, opts.Profile),
 		)
@@ -1271,15 +1272,9 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		endpointURL = sentinelURL
 	}
 
-	var httpClient *http.Client
-	if opts.NoVerifySSL {
-		httpClient = insecureHTTPClient
-	}
 	awsCfg = awsCfg.
-		WithEndpoint(endpointURL.String()).
 		WithS3ForcePathStyle(!isVirtualHostStyle).
 		WithS3UseAccelerate(useAccelerate).
-		WithHTTPClient(httpClient).
 		// TODO WithLowerCaseHeaderMaps and WithDisableRestProtocolURICleaning options
 		// are going to be unnecessary and unsupported in AWS-SDK version 2.
 		// They should be removed during migration.
@@ -1306,15 +1301,38 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		}
 	}
 
+	profile := ""
+	if !opts.NoSignRequest && opts.CredentialFile == "" {
+		profile = opts.Profile
+	}
+
 	sess, err := session.NewSessionWithOptions(
 		session.Options{
 			Config:            *awsCfg,
+			Profile:           profile,
 			SharedConfigState: useSharedConfig,
+			CredentialsProviderOptions: &session.CredentialsProviderOptions{
+				DisableProfileFallback: profile != "",
+				ProcessProviderOptions: func(p *processcreds.ProcessProvider) {
+					p.SanitizeErrors = true
+				},
+			},
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	// Credential-service clients retain verified TLS and their own endpoints;
+	// only storage clients and bucket-region discovery use custom S3 settings.
+	var httpClient *http.Client
+	if opts.NoVerifySSL {
+		httpClient, err = withInsecureTLS(sess.Config.HTTPClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sess = sess.Copy(aws.NewConfig().WithEndpoint(endpointURL.String()).WithHTTPClient(httpClient))
 
 	// get region of the bucket and create session accordingly. if the region
 	// is not provided, it means we want region-independent session
@@ -1413,11 +1431,25 @@ func (c *customRetryer) ShouldRetry(req *request.Request) bool {
 	return shouldRetry
 }
 
-var insecureHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Proxy:           http.ProxyFromEnvironment,
-	},
+func withInsecureTLS(client *http.Client) (*http.Client, error) {
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	base, ok := transport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("cannot disable TLS verification for a custom HTTP transport")
+	}
+	cloned := base.Clone()
+	if cloned.TLSClientConfig == nil {
+		cloned.TLSClientConfig = &tls.Config{}
+	} else {
+		cloned.TLSClientConfig = cloned.TLSClientConfig.Clone()
+	}
+	cloned.TLSClientConfig.InsecureSkipVerify = true
+	copy := *client
+	copy.Transport = cloned
+	return &copy, nil
 }
 
 func supportsTransferAcceleration(endpoint urlpkg.URL) bool {

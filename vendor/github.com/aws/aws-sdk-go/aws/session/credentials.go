@@ -28,6 +28,10 @@ type CredentialsProviderOptions struct {
 	// ProcessProviderOptions configures a ProcessProvider,
 	// such as setting its Timeout.
 	ProcessProviderOptions func(*processcreds.ProcessProvider)
+
+	// DisableProfileFallback rejects profiles without a configured credential
+	// provider instead of falling back to instance or container credentials.
+	DisableProfileFallback bool
 }
 
 func resolveCredentials(cfg *aws.Config,
@@ -146,6 +150,9 @@ func resolveCredsFromProfile(cfg *aws.Config,
 		creds = processcreds.NewCredentials(sharedCfg.CredentialProcess, optFns...)
 
 	default:
+		if sessOpts.CredentialsProviderOptions != nil && sessOpts.CredentialsProviderOptions.DisableProfileFallback {
+			return nil, awserr.New("SharedCredsLoad", "selected profile does not configure a credential provider", nil)
+		}
 		// Fallback to default credentials provider, include mock errors for
 		// the credential chain so user can identify why credentials failed to
 		// be retrieved.
