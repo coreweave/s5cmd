@@ -29,7 +29,9 @@ import (
 
 func buildCredentialProcess(t *testing.T) string {
 	t.Helper()
-	binary := filepath.Join(t.TempDir(), "credential-process.exe")
+	dir := filepath.Join(t.TempDir(), "helper files")
+	assert.NilError(t, os.Mkdir(dir, 0700))
+	binary := filepath.Join(dir, "credential-process.exe")
 	cmd := exec.Command("go", "build", "-o", binary, "../internal/testdata/credential-process/main.go")
 	output, err := cmd.CombinedOutput()
 	assert.NilError(t, err, "build credential process: %s", output)
@@ -49,7 +51,8 @@ func credentialProcessConfig(t *testing.T, binary, mode string) string {
 	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	t.Setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", "http://127.0.0.1:1")
 	t.Setenv("AWS_REGION", "us-east-1")
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "profile files")
+	assert.NilError(t, os.Mkdir(dir, 0700))
 	state := filepath.Join(dir, "invocations")
 	command := fmt.Sprintf("exec %q %s %q", binary, mode, state)
 	if runtime.GOOS == "windows" {

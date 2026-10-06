@@ -20,7 +20,8 @@ import (
 
 func credentialProcessCommand(t *testing.T, helper, mode, endpoint string, args ...string) (*exec.Cmd, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "profile files")
+	assert.NilError(t, os.Mkdir(dir, 0700))
 	state := filepath.Join(dir, "invocations")
 	config := filepath.Join(dir, "config")
 	command := fmt.Sprintf("exec %q %s %q", helper, mode, state)
@@ -51,7 +52,9 @@ func credentialProcessCommand(t *testing.T, helper, mode, endpoint string, args 
 }
 
 func TestCredentialProcessCLI(t *testing.T) {
-	helper := filepath.Join(t.TempDir(), "credential-process.exe")
+	dir := filepath.Join(t.TempDir(), "helper files")
+	assert.NilError(t, os.Mkdir(dir, 0700))
+	helper := filepath.Join(dir, "credential-process.exe")
 	build := exec.Command("go", "build", "-o", helper, "../internal/testdata/credential-process/main.go")
 	output, err := build.CombinedOutput()
 	assert.NilError(t, err, "build credential process: %s", output)

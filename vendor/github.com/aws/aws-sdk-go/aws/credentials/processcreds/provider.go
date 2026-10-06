@@ -439,6 +439,7 @@ func (p *ProcessProvider) executeSanitizedCredentialProcess() ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, p.command.Path, p.command.Args[1:]...)
+	configureCommandLine(cmd)
 	cmd.Env = p.command.Env
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = io.Discard
