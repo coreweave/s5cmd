@@ -72,6 +72,25 @@ func credentialProcessConfig(t *testing.T, binary, mode string) string {
 	return state
 }
 
+func credentialProcessReferenceConfig(t *testing.T, binary, mode string) string {
+	t.Helper()
+	state := credentialProcessConfig(t, binary, mode)
+	if runtime.GOOS != "windows" {
+		return state
+	}
+	// The SDK's Windows command-string quoting cannot preserve embedded quotes.
+	// A batch launcher keeps quoted helper paths out of the command string so
+	// profile and role comparisons exercise the SDK's configuration behavior.
+	dir := t.TempDir()
+	launcher := "s5cmd-credential-reference.cmd"
+	content := fmt.Sprintf("@echo off\r\ncall \"%s\" %s \"%s\"\r\n", binary, mode, state)
+	assert.NilError(t, os.WriteFile(filepath.Join(dir, launcher), []byte(content), 0600))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	config := "[default]\ncredential_process = " + launcher + "\n[profile process]\ncredential_process = " + launcher + "\n"
+	assert.NilError(t, os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(config), 0600))
+	return state
+}
+
 func TestCredentialProcessProfileSelection(t *testing.T) {
 	binary := buildCredentialProcess(t)
 	for _, tc := range []struct {
@@ -307,7 +326,7 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 	binary := buildCredentialProcess(t)
 	for _, source := range []string{"environment role", "web identity", "process role", "process role chain", "process role comments", "process role unquoted comments", "process role tab comments", "process role quoted escapes", "process role nested", "process role nested CRLF", "process role unicode spaces", "process role escaped closing quote", "process role multiline", "process role inline ARN", "process role inline external ID", "process role inline external ID CRLF", "process role duration 959", "process role duration 960"} {
 		t.Run(source, func(t *testing.T) {
-			state := credentialProcessConfig(t, binary, "success")
+			state := credentialProcessReferenceConfig(t, binary, "success")
 			config := "[profile role]\nrole_arn = arn:aws:iam::123456789012:role/synthetic-test-role\n"
 			if source == "environment role" {
 				config += "credential_source = Environment\n"

@@ -147,7 +147,7 @@ func TestCredentialProcessParserMatchesSDK(t *testing.T) {
 	binary := buildCredentialProcess(t)
 	for _, test := range []string{"unknown lines", "cleared role", "cleared source", "trailing backslash", "unquoted empty role", "duplicate section", "mixed case role"} {
 		t.Run(test, func(t *testing.T) {
-			credentialProcessConfig(t, binary, "success")
+			credentialProcessReferenceConfig(t, binary, "success")
 			data, err := os.ReadFile(os.Getenv("AWS_CONFIG_FILE"))
 			assert.NilError(t, err)
 			config := string(data)
