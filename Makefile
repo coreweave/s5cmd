@@ -21,18 +21,18 @@ endif
 
 .PHONY: build
 build:
-	@go build ${GCFLAGS} ${LDFLAGS} -mod=vendor .
+	@go build ${GCFLAGS} ${LDFLAGS} -mod=readonly .
 
 .PHONY: test
 test: $(TEST_TYPE)
 
 .PHONY: test_with_race
 test_with_race:
-	@S5CMD_BUILD_BINARY_WITHOUT_RACE_FLAG=0 go test -mod=vendor -count=1 -race ./...
+	@S5CMD_BUILD_BINARY_WITHOUT_RACE_FLAG=0 go test -mod=readonly -count=1 -race ./...
 
 .PHONY: test_without_race
 test_without_race:
-	@S5CMD_BUILD_BINARY_WITHOUT_RACE_FLAG=1 go test -mod=vendor -count=1 ./...
+	@S5CMD_BUILD_BINARY_WITHOUT_RACE_FLAG=1 go test -mod=readonly -count=1 ./...
 
 ##@ Bootstrap
 # See following issues for why errors are ignored with `-e` flag:
@@ -59,11 +59,11 @@ semgrep: ## Run semgrep
 
 .PHONY: vet
 vet:
-	@go vet -mod=vendor ./...
+	@go vet -mod=readonly ./...
 
 .PHONY: check-fmt
 check-fmt:
-	@if [ $$(go fmt -mod=vendor ./...) ]; then\
+	@if [ $$(go fmt -mod=readonly ./...) ]; then\
 		echo "Go code is not formatted";\
 		exit 1;\
 	fi
@@ -79,7 +79,7 @@ check-gomod: ## Check go.mod file
 
 .PHONY: gogenerate
 gogenerate:
-	@go generate -mod vendor ./...
+	@go generate -mod=readonly ./...
 
 .PHONY: clean
 clean:

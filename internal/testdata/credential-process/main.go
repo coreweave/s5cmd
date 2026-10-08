@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +17,18 @@ func main() {
 		os.Exit(2)
 	}
 	mode, state := os.Args[1], os.Args[2]
+	if mode == "sleep" {
+		if err := os.WriteFile(state+".pid", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			os.Exit(2)
+		}
+		for count := 0; count < 3000; count++ {
+			if err := os.WriteFile(state, []byte(strconv.Itoa(count)), 0600); err != nil {
+				os.Exit(2)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return
+	}
 	data, err := os.ReadFile(state)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		os.Exit(2)
@@ -24,6 +37,12 @@ func main() {
 	count++
 	if err := os.WriteFile(state, []byte(strconv.Itoa(count)), 0600); err != nil {
 		os.Exit(2)
+	}
+	if mode == "read-stdin" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil || len(data) != 0 {
+			os.Exit(2)
+		}
 	}
 
 	failure := strings.TrimPrefix(mode, "renew-")

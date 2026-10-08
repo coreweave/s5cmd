@@ -174,7 +174,7 @@ requests to AWS. Credentials can be provided in a [variety of ways](https://docs
 
     `--endpoint-url` and `--no-verify-ssl` apply to storage requests. Credential exchanges retain their service endpoints and TLS verification.
 
-    Credential-process failures stop the operation without falling back to another provider. Process stderr and raw credential output are suppressed in provider errors to prevent credentials from appearing in logs.
+    Credential-process failures stop the operation without falling back to another provider. Helpers run non-interactively with stdin and stderr suppressed, and stop when the command is cancelled or exits. Raw credential output is excluded from provider errors. Trace logs include request summaries and omit signed HTTP headers.
 
 - Environment variables
 

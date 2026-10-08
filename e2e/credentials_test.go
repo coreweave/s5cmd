@@ -59,6 +59,48 @@ func TestCredentialProcessCLI(t *testing.T) {
 	output, err := build.CombinedOutput()
 	assert.NilError(t, err, "build credential process: %s", output)
 
+	t.Run("helper cannot consume command input", func(t *testing.T) {
+		requests := make(chan struct{}, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests <- struct{}{}
+			_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bucket</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		}))
+		defer server.Close()
+		cmd, _ := credentialProcessCommand(t, helper, "read-stdin", server.URL, "--numworkers", "1", "run")
+		stdin, err := cmd.StdinPipe()
+		assert.NilError(t, err)
+		defer stdin.Close()
+		assert.NilError(t, cmd.Start())
+		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		_, err = io.WriteString(stdin, "ls s3://bucket/\n")
+		assert.NilError(t, err)
+		select {
+		case <-requests:
+		case <-time.After(5 * time.Second):
+			t.Fatal("credential helper must not wait on command input")
+		}
+		assert.NilError(t, stdin.Close())
+		assert.NilError(t, cmd.Wait())
+	})
+
+	t.Run("successful requests do not log credentials", func(t *testing.T) {
+		for _, level := range []string{"info", "debug", "trace"} {
+			t.Run(level, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bucket</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}))
+				defer server.Close()
+				cmd, _ := credentialProcessCommand(t, helper, "success", server.URL, "--log", level, "ls", "s3://bucket/")
+				output, err := cmd.CombinedOutput()
+				assert.NilError(t, err)
+				for _, secret := range []string{"synthetic-process-key", "synthetic-process-secret", "synthetic-process-session"} {
+					assert.Assert(t, !strings.Contains(string(output), secret), "successful request logs must exclude credentials")
+				}
+			})
+		}
+	})
+
 	t.Run("explicit profile overrides environment", func(t *testing.T) {
 		requests := make(chan string, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

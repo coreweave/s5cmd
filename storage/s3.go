@@ -1218,20 +1218,12 @@ func (s *S3) HeadObject(ctx context.Context, url *url.URL) (*Object, *Metadata, 
 	return obj, metadata, nil
 }
 
-type sdkLogger struct{}
-
-func (l sdkLogger) Log(args ...interface{}) {
-	msg := log.TraceMessage{
-		Message: fmt.Sprint(args...),
-	}
-	log.Trace(msg)
-}
-
 // SessionCache holds session.Session according to s3Opts and it synchronizes
 // access/modification.
 type SessionCache struct {
 	sync.Mutex
 	sessions map[Options]*session.Session
+	scopes   map[Options]*credentialProcessScope
 }
 
 // newSession initializes a new AWS session with region fallback and custom
@@ -1240,7 +1232,8 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	sc.Lock()
 	defer sc.Unlock()
 
-	if sess, ok := sc.sessions[opts]; ok {
+	scope, _ := ctx.Value(credentialProcessContextKey{}).(*credentialProcessScope)
+	if sess, ok := sc.sessions[opts]; ok && sc.scopes[opts] == scope {
 		return sess, nil
 	}
 
@@ -1282,11 +1275,6 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		// Disable URI cleaning to allow adjacent slashes to be used in S3 object keys.
 		WithDisableRestProtocolURICleaning(true)
 
-	if opts.LogLevel == log.LevelTrace {
-		awsCfg = awsCfg.WithLogLevel(aws.LogDebug).
-			WithLogger(sdkLogger{})
-	}
-
 	awsCfg.Retryer = newCustomRetryer(opts.MaxRetries)
 
 	useSharedConfig := session.SharedConfigEnable
@@ -1306,20 +1294,23 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		profile = opts.Profile
 	}
 
+	processSelected := false
 	sess, err := session.NewSessionWithOptions(
 		session.Options{
 			Config:            *awsCfg,
 			Profile:           profile,
 			SharedConfigState: useSharedConfig,
 			CredentialsProviderOptions: &session.CredentialsProviderOptions{
-				DisableProfileFallback: profile != "",
-				ProcessProviderOptions: func(p *processcreds.ProcessProvider) {
-					p.SanitizeErrors = true
+				ProcessProviderOptions: func(_ *processcreds.ProcessProvider) {
+					processSelected = true
 				},
 			},
 		},
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := configureProfileCredentials(ctx, sess, profile, useSharedConfig == session.SharedConfigEnable, processSelected); err != nil {
 		return nil, err
 	}
 
@@ -1333,6 +1324,20 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		}
 	}
 	sess = sess.Copy(aws.NewConfig().WithEndpoint(endpointURL.String()).WithHTTPClient(httpClient))
+	if opts.LogLevel == log.LevelTrace {
+		// SDK HTTP dumps include signed headers. Trace only request metadata,
+		// after credential-service clients have captured their own handlers.
+		sess.Handlers.Complete.PushBackNamed(request.NamedHandler{
+			Name: "s5cmd.TraceRequest",
+			Fn: func(r *request.Request) {
+				status := 0
+				if r.HTTPResponse != nil {
+					status = r.HTTPResponse.StatusCode
+				}
+				log.Trace(log.TraceMessage{Message: fmt.Sprintf("DEBUG: %s/%s status=%d retries=%d", r.ClientInfo.ServiceName, r.Operation.Name, status, r.RetryCount)})
+			},
+		})
+	}
 
 	// get region of the bucket and create session accordingly. if the region
 	// is not provided, it means we want region-independent session
@@ -1347,6 +1352,10 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	}
 
 	sc.sessions[opts] = sess
+	if sc.scopes == nil {
+		sc.scopes = make(map[Options]*credentialProcessScope)
+	}
+	sc.scopes[opts] = scope
 
 	return sess, nil
 }
@@ -1355,6 +1364,7 @@ func (sc *SessionCache) clear() {
 	sc.Lock()
 	defer sc.Unlock()
 	sc.sessions = map[Options]*session.Session{}
+	sc.scopes = map[Options]*credentialProcessScope{}
 }
 
 func setSessionRegion(ctx context.Context, sess *session.Session, bucket string) error {

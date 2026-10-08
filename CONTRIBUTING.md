@@ -48,7 +48,7 @@ Here are the list of tools that are used to check the sanity of the code at comp
 
 `make check` command runs all the checks.
 
-Builds use the vendored AWS SDK, whose credential providers include opt-in safeguards for bounded process execution, sanitized errors, and rejecting implicit fallback from explicit profiles. Preserve these safeguards when updating or regenerating the SDK dependency, and run the credential regressions in `storage` and `e2e`.
+Builds use Go modules pinned by `go.mod` and verified by `go.sum`. Credential process execution and explicit profile safeguards live in `storage`; dependencies are unmodified. After updating dependencies, run `go mod verify` and the credential regressions in `storage` and `e2e`.
 
 ### Performance
 

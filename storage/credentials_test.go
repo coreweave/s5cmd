@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"gotest.tools/v3/assert"
 
@@ -45,6 +46,7 @@ func credentialProcessConfig(t *testing.T, binary, mode string) string {
 		"AWS_ACCESS_KEY", "AWS_SECRET_KEY", "AWS_PROFILE", "AWS_DEFAULT_PROFILE",
 		"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
 		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SDK_LOAD_CONFIG",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
 	} {
 		t.Setenv(key, "")
 	}
@@ -191,12 +193,59 @@ func TestExplicitProfileDoesNotUseAmbientCredentials(t *testing.T) {
 	}{
 		{name: "missing", profile: "missing"},
 		{name: "empty", profile: "empty"},
+		{name: "commented provider", profile: "empty"},
+		{name: "dotted profile with parent credentials", profile: "team.child"},
+		{name: "empty source profile", profile: "role"},
+		{name: "cleared process", profile: "process"},
+		{name: "comma provider", profile: "empty"},
+		{name: "mixed case provider", profile: "empty"},
+		{name: "quoted provider comma", profile: "empty"},
+		{name: "quoted provider key", profile: "empty"},
+		{name: "multiline unquoted value", profile: "empty"},
+		{name: "multiline unquoted key", profile: "empty"},
+		{name: "multiline trailing text", profile: "empty"},
 		{name: "configuration disabled", profile: "process", disabled: true},
 		{name: "default chain allows container credentials"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := credentialProcessConfig(t, binary, "success")
 			config := "[default]\nregion = us-east-1\n[profile empty]\nregion = us-east-1\n"
+			if tc.name == "commented provider" {
+				config += "credential_process = # disabled\naws_access_key_id = ; disabled\naws_secret_access_key = # disabled\n"
+			}
+			if tc.name == "comma provider" {
+				config += "credential_process = helper a , b\n"
+			}
+			if tc.name == "mixed case provider" {
+				config += "Credential_Process = helper\n"
+			}
+			if tc.name == "quoted provider comma" {
+				config += "credential_process = \"helper\", b\n"
+			}
+			if tc.name == "quoted provider key" {
+				config += "\"credential_process\" = helper\n"
+			}
+			if tc.name == "multiline unquoted value" {
+				config += "role_session_name = ci \"x\ncredential_process = helper\"\n"
+			}
+			if tc.name == "multiline unquoted key" {
+				config += "unknown \"x\ncredential_process = helper\" = value\n"
+			}
+			if tc.name == "multiline trailing text" {
+				config += "role_session_name = \"ci\" \"x\ncredential_process = helper\"\n"
+			}
+			if tc.name == "dotted profile with parent credentials" {
+				config += "[profile team]\naws_access_key_id = synthetic-parent-key\naws_secret_access_key = synthetic-parent-secret\n[profile team.child]\nregion = us-east-1\n"
+			}
+			if tc.name == "empty source profile" {
+				config += "[profile role]\nrole_arn = arn:aws:iam::123456789012:role/synthetic-role\nsource_profile = empty\n"
+			}
+			if tc.name == "cleared process" {
+				data, err := os.ReadFile(os.Getenv("AWS_CONFIG_FILE"))
+				assert.NilError(t, err)
+				config = string(data)
+				assert.NilError(t, os.WriteFile(os.Getenv("AWS_SHARED_CREDENTIALS_FILE"), []byte("[process]\ncredential_process = \"\"\n"), 0600))
+			}
 			if !tc.disabled {
 				assert.NilError(t, os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(config), 0600))
 			}
@@ -256,7 +305,7 @@ func (tr credentialServiceTransport) RoundTrip(r *http.Request) (*http.Response,
 
 func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 	binary := buildCredentialProcess(t)
-	for _, source := range []string{"environment role", "web identity"} {
+	for _, source := range []string{"environment role", "web identity", "process role", "process role chain", "process role comments", "process role unquoted comments", "process role tab comments", "process role quoted escapes", "process role nested", "process role nested CRLF", "process role unicode spaces", "process role escaped closing quote", "process role multiline", "process role inline ARN", "process role inline external ID", "process role inline external ID CRLF", "process role duration 959", "process role duration 960"} {
 		t.Run(source, func(t *testing.T) {
 			state := credentialProcessConfig(t, binary, "success")
 			config := "[profile role]\nrole_arn = arn:aws:iam::123456789012:role/synthetic-test-role\n"
@@ -264,14 +313,82 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 				config += "credential_source = Environment\n"
 				t.Setenv("AWS_ACCESS_KEY_ID", "synthetic-env-key")
 				t.Setenv("AWS_SECRET_ACCESS_KEY", "synthetic-env-secret")
-			} else {
+			} else if source == "web identity" {
 				token := filepath.Join(t.TempDir(), "web-identity-token")
 				assert.NilError(t, os.WriteFile(token, []byte("synthetic-web-identity-token"), 0600))
 				config += "web_identity_token_file = " + token + "\n"
+			} else {
+				data, err := os.ReadFile(os.Getenv("AWS_CONFIG_FILE"))
+				assert.NilError(t, err)
+				config += "source_profile = process\nrole_session_name = synthetic-session\nexternal_id = synthetic-external\nduration_seconds = 1800\n" + string(data)
+				if source == "process role chain" {
+					config = strings.Replace(config, "source_profile = process", "source_profile = intermediate", 1)
+					config += "[profile intermediate]\nrole_arn = arn:aws:iam::123456789012:role/synthetic-intermediate\nsource_profile = process\n"
+				}
+				if source == "process role comments" {
+					config = strings.ReplaceAll(config, "source_profile = process", "source_profile = \"process\"\t; source")
+					config = strings.ReplaceAll(config, "duration_seconds = 1800", "duration_seconds = \"1800\" # duration")
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", "external_id = \"synthetic-external\" ; external")
+					config += "unrecognized line\n"
+				}
+				if source == "process role unquoted comments" {
+					config = strings.ReplaceAll(config, "source_profile = process", "source_profile = process ; source")
+					config = strings.ReplaceAll(config, "duration_seconds = 1800", "duration_seconds = 1800 # duration")
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", "external_id = synthetic-external ; external")
+				}
+				if source == "process role tab comments" {
+					config = strings.ReplaceAll(config, "role_session_name = synthetic-session", "role_session_name = synthetic-session\t; session")
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", "external_id = synthetic-external\t# external")
+				}
+				if source == "process role quoted escapes" {
+					config = strings.ReplaceAll(config, "role_session_name = synthetic-session", `role_session_name = "synthetic\\session\tname\nend\""`)
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", `external_id = "synthetic\\external\tvalue\nend\""`)
+				}
+				if strings.HasPrefix(source, "process role nested") {
+					files, err := credentialProfileFiles(true)
+					assert.NilError(t, err)
+					command := readCredentialProfile(files, "process", true).values["credential_process"]
+					config = strings.Replace(config, "source_profile = process\n", "", 1)
+					config = strings.Replace(config, "[profile role]\n", "[profile role]\ncredential_process = "+command+"\ns3 =\n  addressing_style = path\n\n", 1)
+					for _, key := range []string{"role_arn", "role_session_name", "external_id", "duration_seconds"} {
+						config = strings.ReplaceAll(config, "\n"+key, "\n  "+key)
+					}
+					if source == "process role nested CRLF" {
+						config = strings.ReplaceAll(config, "\n", "\r\n")
+					}
+				}
+				if source == "process role unicode spaces" {
+					config = strings.ReplaceAll(config, "source_profile = process", "source_profile = \u00a0process")
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", "external_id = \vsynthetic-external")
+					config = strings.ReplaceAll(config, "role_session_name = synthetic-session", "role_session_name = \fsynthetic-session")
+				}
+				if source == "process role escaped closing quote" {
+					config = strings.ReplaceAll(config, "role_session_name = synthetic-session", `role_session_name = "synthetic\\"session"`)
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", `external_id = "synthetic\\"external"`)
+				}
+				if source == "process role multiline" {
+					config = strings.ReplaceAll(config, "role_session_name = synthetic-session", "role_session_name = \"synthetic\nsession\"")
+					config = strings.ReplaceAll(config, "external_id = synthetic-external", "external_id = \"synthetic\r\nexternal\"")
+				}
+				if source == "process role inline ARN" {
+					config = strings.Replace(config, "[profile role]\nrole_arn", "[profile role] role_arn", 1)
+				}
+				if strings.HasPrefix(source, "process role duration ") {
+					seconds := strings.TrimPrefix(source, "process role duration ")
+					config = strings.Replace(config, "duration_seconds = 1800", "duration_seconds = "+seconds, 1)
+				}
+				if strings.HasPrefix(source, "process role inline external ID") {
+					config = strings.Replace(config, "external_id = synthetic-external\n", "", 1)
+					config = strings.Replace(config, "[profile role]\n", "[profile role]\t external_id = synthetic-external\n", 1)
+					if strings.HasSuffix(source, "CRLF") {
+						config = strings.ReplaceAll(config, "\n", "\r\n")
+					}
+				}
 			}
 			assert.NilError(t, os.WriteFile(os.Getenv("AWS_CONFIG_FILE"), []byte(config), 0600))
 			type exchange struct {
 				host, action, authorization, token string
+				sessionName, externalID, duration  string
 			}
 			writeExchange := func(w http.ResponseWriter, action string) {
 				w.Header().Set("Content-Type", "text/xml")
@@ -280,7 +397,7 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 			exchanges := make(chan exchange, 2)
 			credentialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				action := r.FormValue("Action")
-				exchanges <- exchange{r.Host, action, r.Header.Get("Authorization"), r.FormValue("WebIdentityToken")}
+				exchanges <- exchange{host: r.Host, action: action, authorization: r.Header.Get("Authorization"), token: r.FormValue("WebIdentityToken"), sessionName: r.FormValue("RoleSessionName"), externalID: r.FormValue("ExternalId"), duration: r.FormValue("DurationSeconds")}
 				writeExchange(w, action)
 			}))
 			defer credentialServer.Close()
@@ -294,7 +411,7 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 			})
 			storageRequests := make(chan exchange, 2)
 			storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				storageRequests <- exchange{r.Host, r.Method, r.Header.Get("Authorization"), r.FormValue("WebIdentityToken")}
+				storageRequests <- exchange{host: r.Host, action: r.Method, authorization: r.Header.Get("Authorization"), token: r.FormValue("WebIdentityToken")}
 				if action := r.FormValue("Action"); action != "" {
 					writeExchange(w, action)
 					return
@@ -303,23 +420,69 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 				_, _ = fmt.Fprint(w, `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets/></ListAllMyBucketsResult>`)
 			}))
 			defer storageServer.Close()
+			var rawExchange *exchange
+			if strings.HasPrefix(source, "process role") {
+				raw, err := session.NewSessionWithOptions(session.Options{Profile: "role", SharedConfigState: session.SharedConfigEnable})
+				assert.NilError(t, err)
+				_, err = raw.Config.Credentials.Get()
+				assert.NilError(t, err)
+				for len(verifiedRequests) > 0 {
+					<-verifiedRequests
+				}
+				for len(exchanges) > 0 {
+					captured := <-exchanges
+					rawExchange = &captured
+				}
+				assert.NilError(t, os.WriteFile(state, nil, 0600))
+			}
 			opts := Options{Profile: "role", Endpoint: storageServer.URL, LogLevel: log.LevelError}
 			sess, err := globalSessionCache.newSession(context.Background(), opts)
 			assert.NilError(t, err)
 			value, err := sess.Config.Credentials.Get()
 			assert.NilError(t, err)
 			assert.Equal(t, value.AccessKeyID, "synthetic-role-key")
-			assert.Equal(t, len(verifiedRequests), 1)
+			wantExchanges := 1
+			if source == "process role chain" {
+				wantExchanges = 2
+			}
+			assert.Equal(t, len(verifiedRequests), wantExchanges)
 			assert.Equal(t, len(storageRequests), 0, "credential exchanges must not reach storage")
-			assert.Equal(t, len(exchanges), 1)
+			assert.Equal(t, len(exchanges), wantExchanges)
 			received := <-exchanges
 			assert.Assert(t, strings.HasPrefix(received.host, "sts."), "exchange must target the STS service")
 			if source == "environment role" {
 				assert.Equal(t, received.action, "AssumeRole")
 				assert.Assert(t, strings.Contains(received.authorization, "Credential=synthetic-env-key/"))
-			} else {
+			} else if source == "web identity" {
 				assert.Equal(t, received.action, "AssumeRoleWithWebIdentity")
 				assert.Equal(t, received.token, "synthetic-web-identity-token")
+			} else {
+				assert.Equal(t, received.action, "AssumeRole")
+				assert.Assert(t, strings.Contains(received.authorization, "Credential=synthetic-process-key-1/"))
+				if source == "process role chain" {
+					received = <-exchanges
+					assert.Assert(t, strings.Contains(received.authorization, "Credential=synthetic-role-key/"))
+				}
+				sessionName, externalID := "synthetic-session", "synthetic-external"
+				if source == "process role tab comments" {
+					sessionName += "\t; session"
+					externalID += "\t# external"
+				}
+				if source == "process role quoted escapes" {
+					sessionName = "synthetic\\session\tname\nend\""
+					externalID = "synthetic\\external\tvalue\nend\""
+				}
+				if source == "process role escaped closing quote" {
+					sessionName, externalID = `synthetic"session`, `synthetic"external`
+				}
+				if source == "process role multiline" {
+					sessionName, externalID = "synthetic\nsession", "synthetic\r\nexternal"
+				}
+				assert.Equal(t, received.sessionName, sessionName)
+				assert.Equal(t, received.externalID, externalID)
+				assert.Equal(t, received.sessionName, rawExchange.sessionName)
+				assert.Equal(t, received.externalID, rawExchange.externalID)
+				assert.Equal(t, received.duration, rawExchange.duration)
 			}
 			storage, err := newS3Storage(context.Background(), opts)
 			assert.NilError(t, err)
@@ -330,9 +493,13 @@ func TestExplicitProfileCredentialServiceEndpoint(t *testing.T) {
 			assert.Equal(t, received.action, http.MethodGet)
 			assert.Assert(t, strings.Contains(received.authorization, "Credential=synthetic-role-key/"))
 			assert.Equal(t, received.token, "")
-			assert.Equal(t, len(verifiedRequests), 2)
+			assert.Equal(t, len(verifiedRequests), wantExchanges+1)
 			_, err = os.Stat(state)
-			assert.Assert(t, os.IsNotExist(err))
+			if strings.HasPrefix(source, "process role") {
+				assert.NilError(t, err)
+			} else {
+				assert.Assert(t, os.IsNotExist(err))
+			}
 		})
 	}
 }

@@ -1220,9 +1220,9 @@ func TestAWSLogLevel(t *testing.T) {
 		expected aws.LogLevelType
 	}{
 		{
-			name:     "Trace: log level must be aws.LogDebug",
+			name:     "Trace: SDK HTTP dumps must be disabled",
 			level:    "trace",
-			expected: aws.LogDebug,
+			expected: aws.LogOff,
 		},
 		{
 			name:     "Debug: log level must be aws.LogOff",
