@@ -231,7 +231,7 @@ func TestAcceptanceStorage(t *testing.T) {
 
 func safeStorageErrorCode(code string) string {
 	switch code {
-	case "AccessDenied", "Forbidden", "InvalidAccessKeyId", "InvalidToken", "ExpiredToken", "SignatureDoesNotMatch", "InvalidRegion", "InvalidRequest", "InvalidArgument", "AuthorizationHeaderMalformed", "InvalidLocationConstraint", "NoSuchBucket", "NotImplemented":
+	case "AccessDenied", "Forbidden", "InvalidAccessKeyId", "InvalidToken", "ExpiredToken", "SignatureDoesNotMatch", "InvalidRegion", "InvalidRequest", "InvalidArgument", "AuthorizationHeaderMalformed", "InvalidLocationConstraint", "NoSuchBucket", "TooManyBuckets", "NotImplemented":
 		return code
 	default:
 		return "storage request failed"

@@ -12,6 +12,19 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 )
 
+func TestSafeStorageErrorCode(t *testing.T) {
+	for _, code := range []string{"TooManyBuckets", "InvalidRegion", "AccessDenied"} {
+		if got := safeStorageErrorCode(code); got != code {
+			t.Fatalf("public storage code %q was suppressed", code)
+		}
+	}
+	for _, code := range []string{"synthetic-private-value", "TooManyBuckets synthetic-private-value", ""} {
+		if got := safeStorageErrorCode(code); got != "storage request failed" {
+			t.Fatal("unknown storage code was disclosed")
+		}
+	}
+}
+
 type cleanupFixture struct {
 	s3iface.S3API
 	fail                      string
