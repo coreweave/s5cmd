@@ -65,6 +65,7 @@ func NewRemoteClient(ctx context.Context, url *url.URL, opts Options) (*S3, erro
 		DryRun:                 opts.DryRun,
 		NoSignRequest:          opts.NoSignRequest,
 		UseListObjectsV1:       opts.UseListObjectsV1,
+		UseVirtualHostStyle:    opts.UseVirtualHostStyle,
 		RequestPayer:           opts.RequestPayer,
 		Profile:                opts.Profile,
 		CredentialFile:         opts.CredentialFile,
@@ -91,6 +92,7 @@ type Options struct {
 	DryRun                 bool
 	NoSignRequest          bool
 	UseListObjectsV1       bool
+	UseVirtualHostStyle    bool
 	LogLevel               log.LogLevel
 	RequestPayer           string
 	Profile                string

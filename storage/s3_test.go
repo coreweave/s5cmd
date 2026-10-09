@@ -105,6 +105,14 @@ func TestNewSessionPathStyle(t *testing.T) {
 	}
 }
 
+func TestNewSessionExplicitVirtualHostStyle(t *testing.T) {
+	opts := Options{Endpoint: "https://storage.example.invalid", UseVirtualHostStyle: true}
+	opts.SetRegion("us-east-1")
+	sess, err := NewSession(context.Background(), opts)
+	assert.NilError(t, err)
+	assert.Assert(t, !aws.BoolValue(sess.Config.S3ForcePathStyle))
+}
+
 func TestNewSessionWithRegionSetViaEnv(t *testing.T) {
 	globalSessionCache.clear()
 

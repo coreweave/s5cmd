@@ -104,7 +104,7 @@ func newS3Storage(ctx context.Context, opts Options) (*S3, error) {
 		return nil, err
 	}
 
-	awsSession, err := globalSessionCache.newSession(ctx, opts)
+	awsSession, err := NewSession(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +119,13 @@ func newS3Storage(ctx context.Context, opts Options) (*S3, error) {
 		requestPayer:           opts.RequestPayer,
 		noSuchUploadRetryCount: opts.NoSuchUploadRetryCount,
 	}, nil
+}
+
+// NewSession configures an S3 session with the same profile selection, renewable
+// credentials, endpoint, TLS, and addressing rules used by storage operations.
+// Callers using credential processes should scope ctx with WithCredentialProcessContext.
+func NewSession(ctx context.Context, opts Options) (*session.Session, error) {
+	return globalSessionCache.newSession(ctx, opts)
 }
 
 // Stat retrieves metadata from S3 object without returning the object itself.
@@ -1255,7 +1262,7 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 
 	// use virtual-host-style if the endpoint is known to support it,
 	// otherwise use the path-style approach.
-	isVirtualHostStyle := isVirtualHostStyle(endpointURL)
+	isVirtualHostStyle := opts.UseVirtualHostStyle || isVirtualHostStyle(endpointURL)
 
 	useAccelerate := supportsTransferAcceleration(endpointURL)
 	// AWS SDK handles transfer acceleration automatically. Setting the

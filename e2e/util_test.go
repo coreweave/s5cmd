@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	jsonpkg "encoding/json"
 	"errors"
 	"flag"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peak/s5cmd/v2/log"
 	"github.com/peak/s5cmd/v2/storage"
 	"github.com/peak/s5cmd/v2/strutil"
 
@@ -168,7 +170,7 @@ func setup(t *testing.T, options ...option) (*s3.S3, func(...string) icmd.Cmd) {
 
 	region := ""
 	if opts.region != "" {
-		region = opts.accessKeyID
+		region = opts.region
 	}
 
 	var cfg *credentialCfg
@@ -183,7 +185,7 @@ func setup(t *testing.T, options ...option) (*s3.S3, func(...string) icmd.Cmd) {
 
 	client := s3client(t, storage.Options{
 		Endpoint:    endpoint,
-		NoVerifySSL: true,
+		NoVerifySSL: os.Getenv("S5CMD_TEST_MODE") != "live",
 	}, cfg)
 
 	return client, s5cmd(workdir, endpoint)
@@ -221,6 +223,28 @@ func server(t *testing.T, testdir *fs.Dir, opts *setupOpts) string {
 
 func s3client(t *testing.T, options storage.Options, creds *credentialCfg) *s3.S3 {
 	t.Helper()
+	if os.Getenv("S5CMD_TEST_MODE") == "live" {
+		cfg, err := readLiveConfig(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, stop := storage.WithCredentialProcessContext(context.Background())
+		t.Cleanup(stop)
+		options.Profile = cfg.profile
+		options.Endpoint = cfg.endpoint
+		options.NoVerifySSL = false
+		options.UseVirtualHostStyle = true
+		options.LogLevel = log.LevelError
+		options.MaxRetries = 3
+		options.SetRegion(cfg.region)
+		sess, err := storage.NewSession(ctx, options)
+		if err != nil {
+			t.Fatal("live fixture session initialization failed")
+		}
+		fixture := sess.Copy(aws.NewConfig())
+		fixture.Config.Retryer = newSlowDownRetryer(3)
+		return s3.New(fixture)
+	}
 
 	awsLogLevel := aws.LogOff
 	if *flagTestLogLevel == "debug" {
@@ -305,6 +329,9 @@ func (c *slowDownRetryer) ShouldRetry(req *request.Request) bool {
 }
 
 func isEndpointFromEnv() bool {
+	if os.Getenv("S5CMD_TEST_MODE") == "live" {
+		return true
+	}
 	return os.Getenv(s5cmdTestIDEnv) != "" &&
 		os.Getenv(s5cmdTestSecretEnv) != "" &&
 		os.Getenv(s5cmdTestEndpointEnv) != "" &&
@@ -345,6 +372,13 @@ func s5cmd(workdir, endpoint string) func(args ...string) icmd.Cmd {
 					fmt.Sprintf("AWS_REGION=%v", os.Getenv(s5cmdTestRegionEnv)),
 				}...,
 			)
+		}
+		if os.Getenv("S5CMD_TEST_MODE") == "live" {
+			cmd.Command = append(cmd.Command[:1], append([]string{"--use-virtual-host-style", "--profile", os.Getenv("AWS_PROFILE")}, cmd.Command[1:]...)...)
+			cmd.Env = append(env, "AWS_REGION="+os.Getenv(s5cmdTestRegionEnv))
+			cmd.Dir = workdir
+			cmd.Timeout = 2 * time.Minute
+			return cmd
 		}
 
 		env = append(

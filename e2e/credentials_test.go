@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peak/s5cmd/v2/storage"
 	"gotest.tools/v3/assert"
 )
 
@@ -58,6 +59,32 @@ func TestCredentialProcessCLI(t *testing.T) {
 	build := exec.Command("go", "build", "-o", helper, "../internal/testdata/credential-process/main.go")
 	output, err := build.CombinedOutput()
 	assert.NilError(t, err, "build credential process: %s", output)
+
+	t.Run("explicit virtual-host style for custom endpoints", func(t *testing.T) {
+		for _, force := range []bool{false, true} {
+			t.Run(fmt.Sprint(force), func(t *testing.T) {
+				hosts := make(chan string, 1)
+				proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					hosts <- r.Host
+					_, _ = io.WriteString(w, `<ListBucketResult><Name>testbucket</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}))
+				defer proxy.Close()
+				args := []string{"ls", "s3://testbucket/"}
+				if force {
+					args = append([]string{"--use-virtual-host-style"}, args...)
+				}
+				cmd, _ := credentialProcessCommand(t, helper, "success", "http://objects.example.invalid", args...)
+				cmd.Env = append(cmd.Env, "HTTP_PROXY="+proxy.URL, "NO_PROXY=")
+				_, err := cmd.CombinedOutput()
+				assert.NilError(t, err)
+				want := "objects.example.invalid"
+				if force {
+					want = "testbucket." + want
+				}
+				assert.Equal(t, <-hosts, want)
+			})
+		}
+	})
 
 	t.Run("helper cannot consume command input", func(t *testing.T) {
 		requests := make(chan struct{}, 1)
@@ -198,4 +225,54 @@ func TestCredentialProcessCLI(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestLiveFixtureRenewableCredentials(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "credential-process.exe")
+	build := exec.Command("go", "build", "-o", helper, "../internal/testdata/credential-process/main.go")
+	output, err := build.CombinedOutput()
+	assert.NilError(t, err, "build credential process: %s", output)
+	for _, mode := range []string{"refresh", "renew-malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			state := filepath.Join(t.TempDir(), "state")
+			config := filepath.Join(t.TempDir(), "config")
+			command := fmt.Sprintf("exec %q %s %q", helper, mode, state)
+			if runtime.GOOS == "windows" {
+				command = fmt.Sprintf("call \"%s\" %s \"%s\"", helper, mode, state)
+			}
+			assert.NilError(t, os.WriteFile(config, []byte("[profile acceptance]\ncredential_process = "+command+"\n"), 0600))
+			credentials := filepath.Join(t.TempDir(), "credentials")
+			assert.NilError(t, os.WriteFile(credentials, nil, 0600))
+			for _, value := range os.Environ() {
+				key := strings.SplitN(value, "=", 2)[0]
+				if strings.HasPrefix(key, "AWS_") {
+					t.Setenv(key, "")
+				}
+			}
+			for key, value := range map[string]string{
+				"S5CMD_TEST_MODE": "live", "S5CMD_TEST_ENDPOINT_URL": "https://storage.example.invalid", "S5CMD_REGION": "us-east-1",
+				"S5CMD_IS_VIRTUAL_HOST": "true", "S5CMD_I_KNOW_WHAT_IM_DOING": "1", "S5CMD_ACCESS_KEY_ID": "", "S5CMD_SECRET_ACCESS_KEY": "",
+				"AWS_PROFILE": "acceptance", "AWS_CONFIG_FILE": config, "AWS_SHARED_CREDENTIALS_FILE": credentials,
+			} {
+				t.Setenv(key, value)
+			}
+			client := s3client(t, storage.Options{}, nil)
+			first, err := client.Config.Credentials.Get()
+			assert.NilError(t, err)
+			assert.Equal(t, first.ProviderName, "ProcessProvider")
+			time.Sleep(1100 * time.Millisecond)
+			second, err := client.Config.Credentials.Get()
+			if mode == "refresh" {
+				assert.NilError(t, err)
+				assert.Assert(t, first.AccessKeyID != second.AccessKeyID)
+			} else {
+				assert.Assert(t, err != nil)
+				assert.Assert(t, !strings.Contains(err.Error(), "synthetic-private-"))
+			}
+			data, err := os.ReadFile(state)
+			assert.NilError(t, err)
+			assert.Equal(t, string(data), "2")
+		})
+	}
 }

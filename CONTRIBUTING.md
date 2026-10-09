@@ -38,6 +38,8 @@ We strongly encourage you to write tests for your proposed changes. You can run 
 make test
 ```
 
+For the bounded live CLI suite, see [storage acceptance setup](doc/storage-acceptance.md). Live tests require explicit configuration and use renewable profile credentials; ordinary test runs use fake storage.
+
 ### Running static code analysis tools
 
 Here are the list of tools that are used to check the sanity of the code at compile time:
