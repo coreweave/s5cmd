@@ -78,6 +78,10 @@ var app = &cli.App{
 			Name:  "use-list-objects-v1",
 			Usage: "use ListObjectsV1 API for services that don't support ListObjectsV2",
 		},
+		&cli.BoolFlag{
+			Name:  "use-virtual-host-style",
+			Usage: "use bucket subdomains for a custom S3 endpoint",
+		},
 		&cli.StringFlag{
 			Name:  "request-payer",
 			Usage: "who pays for request (access requester pays buckets)",
@@ -186,6 +190,7 @@ func NewStorageOpts(c *cli.Context) storage.Options {
 		NoVerifySSL:            c.Bool("no-verify-ssl"),
 		RequestPayer:           c.String("request-payer"),
 		UseListObjectsV1:       c.Bool("use-list-objects-v1"),
+		UseVirtualHostStyle:    c.Bool("use-virtual-host-style"),
 		Profile:                c.String("profile"),
 		CredentialFile:         c.String("credentials-file"),
 		LogLevel:               log.LevelFromString(c.String("log")),

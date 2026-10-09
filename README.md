@@ -43,6 +43,7 @@ storage services and local filesystems.
 - [S3 Transfer Acceleration](https://docs.aws.amazon.com/AmazonS3/latest/dev/transfer-acceleration.html) support
 - Google Cloud Storage (and any other S3 API compatible service) support
 - Structured logging for querying command outputs
+- Virtual-host addressing for custom S3 endpoints with `--use-virtual-host-style`
 - Shell auto-completion
 - S3 ListObjects API backward compatibility
 

@@ -34,6 +34,10 @@ test_with_race:
 test_without_race:
 	@S5CMD_BUILD_BINARY_WITHOUT_RACE_FLAG=1 go test -mod=readonly -count=1 ./...
 
+.PHONY: acceptance
+acceptance:
+	@S5CMD_TEST_MODE=live go test -mod=readonly ./e2e -run '^TestAcceptanceStorage$$' -count=1 -v -timeout=20m
+
 ##@ Bootstrap
 # See following issues for why errors are ignored with `-e` flag:
 # 	* https://github.com/golang/go/issues/61857
