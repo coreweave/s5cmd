@@ -64,6 +64,8 @@ While adding your changes and testing your changes, it would be good to remember
 
 For this fork, target the `coreweave` branch. CI runs build, test, and QA checks for pull requests and merges into that branch. Merging a pull request does not automatically tag or publish a release.
 
+Release PRs use Conventional Commits and require protected storage acceptance before publication. See [release setup and operation](doc/releases.md).
+
 Once you add your changes and all the tests/checks pass, you can submit your pull request to the `peak/s5cmd` repository. Github will trigger automated tests in Github Actions. All tests and checks will be run on different operating systems including `linux`, `macos` and `windows`. 
 
 An `s5cmd` maintainer will review your pull request. They may suggest updates for clarity and style, or request additional unit or integration tests. 

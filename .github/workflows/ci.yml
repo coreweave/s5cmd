@@ -1,6 +1,19 @@
 name: ci
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      expected_head:
+        description: Expected release candidate commit (empty for an ordinary manual run)
+        default: ''
+        type: string
+      producer_run_id:
+        description: Trusted release workflow run
+        default: ''
+        type: string
+      producer_attempt:
+        description: Trusted release workflow attempt
+        default: ''
+        type: string
   pull_request:
     branches:
       - "coreweave"
@@ -10,7 +23,26 @@ on:
 permissions:
   contents: read
 jobs:
+  release-preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Verify release candidate
+      if: github.event_name == 'workflow_dispatch' && inputs.expected_head != ''
+      run: python3 scripts/release_gate.py ci-preflight
+      env:
+        GH_TOKEN: ${{ github.token }}
+        EXPECTED_HEAD: ${{ inputs.expected_head }}
+        PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+        PRODUCER_ATTEMPT: ${{ inputs.producer_attempt }}
   build:
+    needs: release-preflight
     strategy:
       matrix:
         go-version:
@@ -35,6 +67,7 @@ jobs:
     - run: make build
 
   test:
+    needs: release-preflight
     strategy:
       matrix:
         go-version:
@@ -75,6 +108,7 @@ jobs:
       env:
         S5CMD_TEST_ENDPOINT_URL: ${{ (matrix.os == 'ubuntu') && 'http://localhost:45677' || '' }}
   qa:
+    needs: release-preflight
     strategy:
       matrix:
         go-version:
@@ -97,6 +131,7 @@ jobs:
     - run: make check
 
   credential-helper:
+    needs: release-preflight
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

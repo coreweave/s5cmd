@@ -1,12 +1,10 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/goreleaser/goreleaser/v1.18.2/www/docs/static/schema.json
 
-before:
-  hooks:
-    - make build
+project_name: s5cmd
 builds:
   -
     binary: s5cmd
-    ldflags: -s -w -X github.com/coreweave/s5cmd/v2/version.Version={{.Tag}} -X github.com/coreweave/s5cmd/v2/version.GitCommit={{ .ShortCommit }}
+    ldflags: -s -w -X github.com/peak/s5cmd/v2/version.Version={{ .Env.RELEASE_VERSION }} -X github.com/peak/s5cmd/v2/version.GitCommit={{ .ShortCommit }}
     env:
       - CGO_ENABLED=0
     goos:
@@ -39,7 +37,7 @@ checksum:
   name_template: '{{ .ProjectName }}_checksums.txt'
 
 snapshot:
-  name_template: "{{ .Tag }}-{{ .ShortCommit }}"
+  name_template: "{{ .Env.RELEASE_VERSION }}"
 
 changelog:
   sort: asc
@@ -52,10 +50,10 @@ changelog:
 
 nfpms:
   -
-    vendor: Peak
-    homepage: https://github.com/peak/s5cmd
+    vendor: CoreWeave
+    homepage: https://github.com/coreweave/s5cmd
     license: MIT
-    maintainer: Peak <packaging@peak.com>
+    maintainer: CoreWeave
     description: |-
       Very fast S3 and local filesystem execution tool. It comes with support
       for a multitude of operations including tab completion and wildcard
@@ -65,4 +63,4 @@ nfpms:
       - deb
 
 release:
-  draft: false
+  draft: true

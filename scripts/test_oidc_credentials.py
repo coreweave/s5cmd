@@ -1,4 +1,5 @@
 import contextlib
+import base64
 import datetime
 import io
 import json
@@ -13,6 +14,27 @@ import oidc_credentials as helper
 
 
 class OIDCCredentialsTests(unittest.TestCase):
+    def test_configured_subject_and_issuer_must_match_before_exchange(self):
+        env = {'ACTIONS_ID_TOKEN_REQUEST_URL': 'https://tokens.actions.githubusercontent.com/id',
+               'ACTIONS_ID_TOKEN_REQUEST_TOKEN': 'synthetic-request-token',
+               'S5CMD_OIDC_SUBJECT': 'synthetic-approved-subject'}
+        for field in (None, 'sub', 'aud', 'iss'):
+            claims = {'sub': 'synthetic-approved-subject', 'aud': 'https://coreweave.com/iam',
+                      'iss': 'https://token.actions.githubusercontent.com'}
+            if field:
+                claims[field] = 'synthetic-unapproved-value'
+            payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')
+            token = 'synthetic-header.' + payload + '.synthetic-signature'
+            class Opener:
+                def open(self, request, timeout):
+                    return io.BytesIO(json.dumps({'value': token}).encode())
+            with patch.dict(os.environ, env, clear=True), patch.object(helper.urllib.request, 'build_opener', return_value=Opener()):
+                if field:
+                    with self.assertRaises(ValueError):
+                        helper.oidc_token()
+                else:
+                    self.assertEqual(helper.oidc_token(), token)
+
     def test_failed_exchange_is_sanitized(self):
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.object(helper, 'credentials', side_effect=RuntimeError('synthetic-private-jwt')), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
