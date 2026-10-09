@@ -83,19 +83,6 @@ jobs:
     runs-on: ${{ matrix.os }}-latest
     env:
       GOFLAGS: ${{ matrix.os == 'macos' && '-ldflags=-linkmode=external' || '' }}
-    services:
-      minio:
-        image: ${{ (matrix.os == 'ubuntu') && 'bitnamilegacy/minio:2023.7.18' || ''}}
-        ports:
-          - 45677:9000
-        options: >-
-          --health-cmd "curl -I http://localhost:9000/minio/health/live -s"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -104,9 +91,32 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
 
-    - run: make test
+    - name: Build pinned local test storage
+      if: matrix.os == 'ubuntu'
+      run: GOBIN="$RUNNER_TEMP/minio-bin" go install github.com/minio/minio@0120ff93bc4b9cfaf2865e55850e9b20e5ef703d # RELEASE.2023-07-18T17-49-40Z
+    - name: Run tests
+      shell: bash
+      run: |
+        if [ -n "$S5CMD_TEST_ENDPOINT_URL" ]; then
+          "$RUNNER_TEMP/minio-bin/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:45677 >"$RUNNER_TEMP/minio.log" 2>&1 &
+          minio_pid=$!
+          trap 'kill "$minio_pid" 2>/dev/null || true; wait "$minio_pid" 2>/dev/null || true' EXIT
+          for ((attempt=0; attempt<30; attempt++)); do
+            if curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
+            echo 'Local test storage did not become healthy.'
+            exit 1
+          fi
+        fi
+        make test
       env:
         S5CMD_TEST_ENDPOINT_URL: ${{ (matrix.os == 'ubuntu') && 'http://localhost:45677' || '' }}
+        MINIO_ROOT_USER: minioadmin
+        MINIO_ROOT_PASSWORD: minioadmin
   qa:
     needs: release-preflight
     strategy:
@@ -127,6 +137,11 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
 
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: '3.11'
+    - name: Install pinned Semgrep without a container pull
+      run: python -m pip install --disable-pip-version-check semgrep==1.65.0
     - run: make bootstrap
     - run: make check
 
