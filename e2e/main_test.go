@@ -24,8 +24,9 @@ func runTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if cfg != nil && flag.Lookup("test.run").Value.String() != "^TestAcceptanceStorage$" {
-		fmt.Fprintln(os.Stderr, "live tests require the complete TestAcceptanceStorage suite")
+	selector := flag.Lookup("test.run").Value.String()
+	if cfg != nil && selector != "^TestAcceptanceStorage$" && selector != "^TestAcceptanceRecovery$" {
+		fmt.Fprintln(os.Stderr, "live tests require the complete acceptance suite or scoped recovery")
 		return 1
 	}
 	if cfg != nil {

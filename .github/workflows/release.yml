@@ -1,0 +1,175 @@
+name: Release
+on:
+  push:
+    branches: [coreweave]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-coreweave
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+    outputs:
+      publish: ${{ steps.verify.outputs.publish }}
+      plan: ${{ steps.verify.outputs.plan }}
+      tag: ${{ steps.verify.outputs.tag }}
+      version: ${{ steps.verify.outputs.version }}
+      commit: ${{ steps.verify.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: verify
+        run: python3 scripts/release_gate.py publication-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_AUTOMATION_ENABLED: ${{ vars.RELEASE_AUTOMATION_ENABLED }}
+
+  publish:
+    needs: authorize
+    if: needs.authorize.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    env:
+      RELEASE_PLAN: ${{ needs.authorize.outputs.plan }}
+      RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.22.12'
+          cache: false
+      - name: Reserve the verified tag and draft release
+        id: prepare
+        run: python3 scripts/release_gate.py prepare-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        if: steps.prepare.outputs.build == 'true'
+        with:
+          version: v1.18.2
+          args: release --snapshot --skip-publish --rm-dist
+      - name: Upload archives, packages and checksums
+        if: steps.prepare.outputs.build == 'true'
+        run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.deb dist/*checksums.txt --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        if: steps.prepare.outputs.build == 'true'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.prepare.outputs.build == 'true'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.prepare.outputs.build == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Select version tags without moving latest backward
+        if: steps.prepare.outputs.build == 'true'
+        id: tags
+        run: python3 scripts/release_gate.py publication-tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        if: steps.prepare.outputs.build == 'true'
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/arm/v6,linux/arm/v7,linux/386
+          build-args: |
+            VERSION=${{ needs.authorize.outputs.version }}
+            BUILD=${{ needs.authorize.outputs.commit }}
+          tags: ${{ steps.tags.outputs.tags }}
+      - name: Publish completed release
+        run: python3 scripts/release_gate.py finalize-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.prepare.outputs.release }}
+
+  release-please:
+    needs: [authorize, publish]
+    if: always() && github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true' && needs.authorize.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      candidate: ${{ steps.capture.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refresh PRs only from the current target tip
+        id: tip
+        run: python3 scripts/release_gate.py release-tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Update the release PR
+        if: steps.tip.outputs.current == 'true'
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ github.token }}
+          target-branch: coreweave
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+      - name: Record the release candidate
+        if: steps.tip.outputs.current == 'true'
+        id: capture
+        run: python3 scripts/release_gate.py capture-candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLEASE_PRS: ${{ steps.release.outputs.prs }}
+      - name: Store candidate source hashes
+        if: steps.capture.outputs.candidate == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-candidate-${{ github.run_attempt }}
+          path: release-candidate.json
+          if-no-files-found: error
+          retention-days: 90
+
+  dispatch-validation:
+    needs: release-please
+    if: always() && needs.release-please.result == 'success' && needs.release-please.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Explicitly schedule candidate CI and storage acceptance
+        run: python3 scripts/release_gate.py dispatch-validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN_ID: ${{ github.run_id }}
+          PRODUCER_ATTEMPT: ${{ github.run_attempt }}

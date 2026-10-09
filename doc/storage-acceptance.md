@@ -45,7 +45,7 @@ GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOK
 
 Run helper regressions with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Normal PR CI runs these synthetic tests without OIDC permission or live configuration.
 
-Storage federation must trust the actual subject issued for this repository's protected environment, including any subject customization. Grant the credential-exchange permission separately from storage permissions on the acceptance bucket prefix. Configure environment reviewers and release-PR verification before granting the execution job `id-token: write`; this harness PR does not enable privileged live workflows or publication. GitHub App authentication for release-bot event delivery is separate from storage federation.
+Storage federation must trust the actual subject issued for this repository's protected environment, including any subject customization. Grant the credential-exchange permission separately from storage permissions on the acceptance bucket prefix. Configure environment reviewers and release-PR verification before granting the execution job `id-token: write`; see [release setup and operation](releases.md). The built-in GitHub token manages release PRs and dispatches validation separately from storage federation.
 
 ## Cleanup and diagnosis
 
