@@ -3,7 +3,7 @@ module github.com/peak/s5cmd/v2
 go 1.20
 
 require (
-	github.com/aws/aws-sdk-go v1.44.298
+	github.com/aws/aws-sdk-go v1.55.5
 	github.com/cheggaaa/pb/v3 v3.1.4
 	github.com/google/go-cmp v0.6.0
 	github.com/hashicorp/go-multierror v1.1.1
@@ -24,7 +24,6 @@ require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fatih/color v1.15.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

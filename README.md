@@ -145,7 +145,7 @@ against each matching object, in parallel.
 `s5cmd` uses official AWS SDK to access S3. SDK requires credentials to sign
 requests to AWS. Credentials can be provided in a [variety of ways](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html):
 
-- Command line options `--profile` to use a named profile, `--credentials-file` flag to use the specified credentials file
+- Command line options `--profile` to use a named profile from the shared AWS configuration and credentials files, `--credentials-file` to use a specified static credentials file
 
     ```sh
     # Use your company profile in AWS default credential file
@@ -154,6 +154,27 @@ requests to AWS. Credentials can be provided in a [variety of ways](https://docs
     # Use your company profile in your own credential file
     s5cmd --credentials-file ~/.your-credentials-file --profile my-work-profile ls s3://my-company-bucket/
     ```
+
+- Renewable credentials from an AWS shared configuration profile
+
+    ```ini
+    [profile renewable]
+    credential_process = credential-helper
+    ```
+
+    ```sh
+    AWS_PROFILE=renewable s5cmd ls s3://example-bucket/
+    # Explicit profile selection also supports credential_process.
+    s5cmd --profile renewable ls s3://example-bucket/
+    ```
+
+    The helper must return AWS credential-process JSON. When it includes `Expiration`, the SDK refreshes credentials within the running process. Environment access keys take precedence over `AWS_PROFILE`; an explicit `--profile` selects that profile ahead of environment access keys. `--credentials-file` selects static credentials and takes precedence over a credential process.
+
+    An explicit profile must configure a credential provider. Missing or empty explicit profiles fail without consulting instance or container credentials. Profiles that explicitly select a credential source retain that behavior.
+
+    `--endpoint-url` and `--no-verify-ssl` apply to storage requests. Credential exchanges retain their service endpoints and TLS verification.
+
+    Credential-process failures stop the operation without falling back to another provider. Helpers run non-interactively with stdin and stderr suppressed, and stop when the command is cancelled or exits. Raw credential output is excluded from provider errors. Trace logs include request summaries and omit signed HTTP headers.
 
 - Environment variables
 

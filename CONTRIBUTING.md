@@ -48,6 +48,8 @@ Here are the list of tools that are used to check the sanity of the code at comp
 
 `make check` command runs all the checks.
 
+Builds use Go modules pinned by `go.mod` and verified by `go.sum`. Credential process execution and explicit profile safeguards live in `storage`; dependencies are unmodified. After updating dependencies, run `go mod verify` and the credential regressions in `storage` and `e2e`.
+
 ### Performance
 
 While adding your changes and testing your changes, it would be good to remember that `s5cmd`'s goal is to be the fastest s3 client with a rich set of functionality. Here are some important things to keep in mind:
@@ -57,6 +59,8 @@ While adding your changes and testing your changes, it would be good to remember
 
 
 ## Submitting a Pull Request
+
+For this fork, target the `coreweave` branch. CI runs build, test, and QA checks for pull requests and merges into that branch. Merging a pull request does not automatically tag or publish a release.
 
 Once you add your changes and all the tests/checks pass, you can submit your pull request to the `peak/s5cmd` repository. Github will trigger automated tests in Github Actions. All tests and checks will be run on different operating systems including `linux`, `macos` and `windows`. 
 

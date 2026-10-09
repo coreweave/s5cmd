@@ -226,6 +226,8 @@ func AppCommand(name string) *cli.Command {
 
 // Main is the entrypoint function to run given commands.
 func Main(ctx context.Context, args []string) error {
+	ctx, stopCredentialProcesses := storage.WithCredentialProcessContext(ctx)
+	defer stopCredentialProcesses()
 	app.Commands = Commands()
 
 	return app.RunContext(ctx, args)

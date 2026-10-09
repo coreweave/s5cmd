@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/processcreds"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -1217,20 +1218,12 @@ func (s *S3) HeadObject(ctx context.Context, url *url.URL) (*Object, *Metadata, 
 	return obj, metadata, nil
 }
 
-type sdkLogger struct{}
-
-func (l sdkLogger) Log(args ...interface{}) {
-	msg := log.TraceMessage{
-		Message: fmt.Sprint(args...),
-	}
-	log.Trace(msg)
-}
-
 // SessionCache holds session.Session according to s3Opts and it synchronizes
 // access/modification.
 type SessionCache struct {
 	sync.Mutex
 	sessions map[Options]*session.Session
+	scopes   map[Options]*credentialProcessScope
 }
 
 // newSession initializes a new AWS session with region fallback and custom
@@ -1239,7 +1232,8 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	sc.Lock()
 	defer sc.Unlock()
 
-	if sess, ok := sc.sessions[opts]; ok {
+	scope, _ := ctx.Value(credentialProcessContextKey{}).(*credentialProcessScope)
+	if sess, ok := sc.sessions[opts]; ok && sc.scopes[opts] == scope {
 		return sess, nil
 	}
 
@@ -1248,7 +1242,7 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	if opts.NoSignRequest {
 		// do not sign requests when making service API calls
 		awsCfg = awsCfg.WithCredentials(credentials.AnonymousCredentials)
-	} else if opts.CredentialFile != "" || opts.Profile != "" {
+	} else if opts.CredentialFile != "" {
 		awsCfg = awsCfg.WithCredentials(
 			credentials.NewSharedCredentials(opts.CredentialFile, opts.Profile),
 		)
@@ -1271,26 +1265,15 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		endpointURL = sentinelURL
 	}
 
-	var httpClient *http.Client
-	if opts.NoVerifySSL {
-		httpClient = insecureHTTPClient
-	}
 	awsCfg = awsCfg.
-		WithEndpoint(endpointURL.String()).
 		WithS3ForcePathStyle(!isVirtualHostStyle).
 		WithS3UseAccelerate(useAccelerate).
-		WithHTTPClient(httpClient).
 		// TODO WithLowerCaseHeaderMaps and WithDisableRestProtocolURICleaning options
 		// are going to be unnecessary and unsupported in AWS-SDK version 2.
 		// They should be removed during migration.
 		WithLowerCaseHeaderMaps(true).
 		// Disable URI cleaning to allow adjacent slashes to be used in S3 object keys.
 		WithDisableRestProtocolURICleaning(true)
-
-	if opts.LogLevel == log.LevelTrace {
-		awsCfg = awsCfg.WithLogLevel(aws.LogDebug).
-			WithLogger(sdkLogger{})
-	}
 
 	awsCfg.Retryer = newCustomRetryer(opts.MaxRetries)
 
@@ -1306,14 +1289,54 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 		}
 	}
 
+	profile := ""
+	if !opts.NoSignRequest && opts.CredentialFile == "" {
+		profile = opts.Profile
+	}
+
+	processSelected := false
 	sess, err := session.NewSessionWithOptions(
 		session.Options{
 			Config:            *awsCfg,
+			Profile:           profile,
 			SharedConfigState: useSharedConfig,
+			CredentialsProviderOptions: &session.CredentialsProviderOptions{
+				ProcessProviderOptions: func(_ *processcreds.ProcessProvider) {
+					processSelected = true
+				},
+			},
 		},
 	)
 	if err != nil {
 		return nil, err
+	}
+	if err := configureProfileCredentials(ctx, sess, profile, useSharedConfig == session.SharedConfigEnable, processSelected); err != nil {
+		return nil, err
+	}
+
+	// Credential-service clients retain verified TLS and their own endpoints;
+	// only storage clients and bucket-region discovery use custom S3 settings.
+	var httpClient *http.Client
+	if opts.NoVerifySSL {
+		httpClient, err = withInsecureTLS(sess.Config.HTTPClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sess = sess.Copy(aws.NewConfig().WithEndpoint(endpointURL.String()).WithHTTPClient(httpClient))
+	if opts.LogLevel == log.LevelTrace {
+		// SDK HTTP dumps include signed headers. Trace only request metadata,
+		// after credential-service clients have captured their own handlers.
+		sess.Handlers.Complete.PushBackNamed(request.NamedHandler{
+			Name: "s5cmd.TraceRequest",
+			Fn: func(r *request.Request) {
+				status := 0
+				if r.HTTPResponse != nil {
+					status = r.HTTPResponse.StatusCode
+				}
+				log.Trace(log.TraceMessage{Message: fmt.Sprintf("DEBUG: %s/%s status=%d retries=%d", r.ClientInfo.ServiceName, r.Operation.Name, status, r.RetryCount)})
+			},
+		})
 	}
 
 	// get region of the bucket and create session accordingly. if the region
@@ -1329,6 +1352,10 @@ func (sc *SessionCache) newSession(ctx context.Context, opts Options) (*session.
 	}
 
 	sc.sessions[opts] = sess
+	if sc.scopes == nil {
+		sc.scopes = make(map[Options]*credentialProcessScope)
+	}
+	sc.scopes[opts] = scope
 
 	return sess, nil
 }
@@ -1337,6 +1364,7 @@ func (sc *SessionCache) clear() {
 	sc.Lock()
 	defer sc.Unlock()
 	sc.sessions = map[Options]*session.Session{}
+	sc.scopes = map[Options]*credentialProcessScope{}
 }
 
 func setSessionRegion(ctx context.Context, sess *session.Session, bucket string) error {
@@ -1413,11 +1441,25 @@ func (c *customRetryer) ShouldRetry(req *request.Request) bool {
 	return shouldRetry
 }
 
-var insecureHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Proxy:           http.ProxyFromEnvironment,
-	},
+func withInsecureTLS(client *http.Client) (*http.Client, error) {
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	base, ok := transport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("cannot disable TLS verification for a custom HTTP transport")
+	}
+	cloned := base.Clone()
+	if cloned.TLSClientConfig == nil {
+		cloned.TLSClientConfig = &tls.Config{}
+	} else {
+		cloned.TLSClientConfig = cloned.TLSClientConfig.Clone()
+	}
+	cloned.TLSClientConfig.InsecureSkipVerify = true
+	copy := *client
+	copy.Transport = cloned
+	return &copy, nil
 }
 
 func supportsTransferAcceleration(endpoint urlpkg.URL) bool {
