@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "acb67716e42d14d81cf8446f639e8dcf1a4daab3",
+  "release-type": "simple",
+  "include-component-in-tag": true,
+  "always-update": true,
+  "packages": {
+    ".": {
+      "component": "coreweave",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "version.txt"
+    }
+  }
+}

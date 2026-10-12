@@ -2,6 +2,7 @@
 """Renewable AWS credential_process for a protected GitHub Actions job."""
 
 import datetime
+import base64
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,15 @@ def oidc_token():
     token = json.loads(data)['value']
     if not isinstance(token, str) or not token.strip():
         raise ValueError('empty OIDC token')
+    expected = os.environ.get('S5CMD_OIDC_SUBJECT')
+    if expected:
+        # GitHub supplies this token over authenticated TLS; the exchange service
+        # verifies its signature. Check the configured identity before sending it.
+        payload = token.split('.')[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+        if (claims.get('sub') != expected or claims.get('iss') != 'https://token.actions.githubusercontent.com'
+                or claims.get('aud') != 'https://coreweave.com/iam'):
+            raise ValueError('unexpected OIDC identity')
     return token
 
 

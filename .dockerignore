@@ -1,1 +1,8 @@
-.env
+.env*
+.git
+.aws
+.agents
+.codex
+__pycache__
+dist
+s5cmd

@@ -1,0 +1,148 @@
+name: Storage gate
+on:
+  pull_request_target:
+    branches: [coreweave]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  push:
+    branches: [coreweave]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Release PR number
+        required: true
+        type: string
+      producer_run_id:
+        description: Trusted release workflow run
+        required: true
+        type: string
+      producer_attempt:
+        description: Trusted release workflow attempt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-gate-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'event' }}-${{ inputs.pr || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+      actions: read
+    outputs:
+      live: ${{ steps.verify.outputs.live }}
+      proof: ${{ steps.verify.outputs.proof }}
+      check: ${{ steps.verify.outputs.check }}
+      base: ${{ steps.verify.outputs.base }}
+      merge: ${{ steps.verify.outputs.merge }}
+      pr: ${{ steps.verify.outputs.pr }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: verify
+        run: python3 scripts/release_gate.py inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_AUTOMATION_ENABLED: ${{ vars.RELEASE_AUTOMATION_ENABLED }}
+
+  acceptance:
+    needs: inspect
+    if: needs.inspect.outputs.live == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: storage-acceptance
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    concurrency:
+      group: storage-live-${{ needs.inspect.outputs.pr }}
+      cancel-in-progress: false
+    env:
+      CWIC_API_URL: ${{ secrets.STORAGE_API_URL }}
+      S5CMD_TEST_ORG: ${{ secrets.STORAGE_ORG }}
+      S5CMD_TEST_ENDPOINT_URL: ${{ secrets.STORAGE_ENDPOINT_URL }}
+      S5CMD_REGION: ${{ secrets.STORAGE_REGION }}
+      S5CMD_OIDC_SUBJECT: ${{ secrets.STORAGE_OIDC_SUBJECT }}
+      S5CMD_TEST_MODE: live
+      S5CMD_IS_VIRTUAL_HOST: 'true'
+      S5CMD_I_KNOW_WHAT_IM_DOING: '1'
+      AWS_PROFILE: acceptance
+      AWS_SDK_LOAD_CONFIG: '1'
+      AWS_EC2_METADATA_DISABLED: 'true'
+      RELEASE_PROOF: ${{ needs.inspect.outputs.proof }}
+    steps:
+      - name: Load trusted control code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.base }}
+          path: control
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.22.12'
+          cache: false
+      - uses: coreweave/actions-public/cwic/setup-cwic@6b225e30df11c646ddee8641565935318f0918f0
+        with:
+          version: v1.47.1
+      - name: Reverify after environment approval
+        run: python3 control/scripts/run_storage_acceptance.py prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Check out only the verified candidate merge
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.merge }}
+          path: candidate
+          persist-credentials: false
+      - name: Run bounded live suite
+        run: python3 control/scripts/run_storage_acceptance.py test
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Recover the exact run bucket and remove private files
+        if: always()
+        run: python3 control/scripts/run_storage_acceptance.py cleanup
+
+  record:
+    needs: [inspect, acceptance]
+    if: always() && needs.inspect.outputs.live == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_PROOF: ${{ needs.inspect.outputs.proof }}
+      RELEASE_CHECK: ${{ needs.inspect.outputs.check }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.base }}
+          persist-credentials: false
+      - name: Prepare public source evidence
+        id: evidence
+        run: python3 scripts/release_gate.py evidence
+        env:
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
+      - name: Store source hashes only
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: storage-acceptance-evidence-${{ github.run_attempt }}
+          path: acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Complete the required gate after evidence is stored
+        if: always()
+        run: python3 scripts/release_gate.py finish
+        env:
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result == 'success' && steps.evidence.outcome == 'success' && steps.upload.outcome == 'success' && 'success' || 'failure' }}
