@@ -23,11 +23,13 @@ GATE = 'storage-acceptance'
 # GitHub signs API-created commits for the built-in Actions bot.
 GITHUB_ACTIONS_BOT_ID = 41898282
 GITHUB_SIGNER_ID = 19864447
+CI_GO_VERSIONS = ('1.20', '1.21', '1.22')
 CI_CHECKS = {'credential-helper'} | {
-    f'{kind} ({system}/go-{version}.x)'
-    for kind in ('build', 'test') for system in ('ubuntu', 'macos', 'windows')
-    for version in ('1.20', '1.21', '1.22')
-} | {f'qa ({version}.x, ubuntu)' for version in ('1.20', '1.21', '1.22')}
+    f'build ({system}/go-{version}.x)'
+    for system in ('ubuntu', 'macos', 'windows')
+    for version in CI_GO_VERSIONS
+} | {f'test (ubuntu/go-{version}.x)' for version in CI_GO_VERSIONS
+} | {f'qa ({version}.x, ubuntu)' for version in CI_GO_VERSIONS}
 
 
 def require(condition):
@@ -308,44 +310,33 @@ def gate_uses_current_base(api, head):
 
 
 def inspect(api, bot_id):
-    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    dispatch = os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+    event_name = os.environ['GITHUB_EVENT_NAME']
+    require(event_name in ('push', 'workflow_dispatch'))
+    require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
+    require(os.environ.get('RELEASE_AUTOMATION_ENABLED') == 'true')
+    dispatch = event_name == 'workflow_dispatch'
     if dispatch:
-        require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
-        number = int(event['inputs']['pr'])
-    elif 'pull_request' in event:
-        number = event['pull_request']['number']
+        inputs = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']
+        number = int(inputs['pr'])
     else:
-        require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
         if api.request('/git/ref/heads/coreweave')['object']['sha'] != os.environ['GITHUB_SHA']:
             outputs({'live': 'false'})
             return
         prs = [pr for pr in api.pages('/pulls?state=open&base=coreweave')
-               if pr['user']['id'] == bot_id and
-               (pr['head']['repo'] or {}).get('full_name') == api.repository and claims_release(pr, bot_id)]
+               if pr['user']['id'] == bot_id and pr['head']['ref'] in RELEASE_BRANCHES and
+               (pr['head']['repo'] or {}).get('full_name') == api.repository]
         require(len(prs) <= 1)
         if not prs:
             outputs({'live': 'false'})
             return
         number = prs[0]['number']
     pr = api.request(f'/pulls/{number}')
+    require(pr['state'] == 'open' and pr['base']['ref'] == 'coreweave' and
+            pr['user']['id'] == bot_id and pr['head']['ref'] in RELEASE_BRANCHES and
+            (pr['head']['repo'] or {}).get('full_name') == api.repository)
     head = sha(pr['head']['sha'])
-    # Bot updates use an explicit dispatch with immutable producer evidence.
-    # Automatic PR events must not replace its pending or completed live gate.
-    if not dispatch and 'pull_request' in event and pr['user']['id'] == bot_id and claims_release(pr, bot_id):
-        outputs({'live': 'false'})
-        return
     # A slow base-push handler must not invalidate the newer explicit dispatch.
-    if not dispatch and 'pull_request' not in event and gate_uses_current_base(api, head):
-        outputs({'live': 'false'})
-        return
-    # A check belongs to a SHA, so a fork of a release head must not overwrite
-    # that release's live gate with an ordinary PR success (or failure).
-    protected = [other for other in api.pages(f'/commits/{head}/pulls')
-                 if other['number'] != number and other['head']['sha'] == head and
-                 other['user']['id'] == bot_id and
-                 (other['head']['repo'] or {}).get('full_name') == api.repository and claims_release(other, bot_id)]
-    if protected:
+    if not dispatch and gate_uses_current_base(api, head):
         outputs({'live': 'false'})
         return
     check = api.request('/check-runs', 'POST', {
@@ -354,16 +345,11 @@ def inspect(api, bot_id):
         'details_url': f'https://github.com/{api.repository}/actions/runs/{int(os.environ["GITHUB_RUN_ID"])}'})
     try:
         require(check['external_id'] == f'{int(os.environ["GITHUB_RUN_ID"])}:{int(os.environ["GITHUB_RUN_ATTEMPT"])}')
-        if not claims_release(pr, bot_id):
-            complete_check(api, check['id'], 'success', 'Ordinary PR: live storage execution is not requested.')
-            outputs({'live': 'false'})
-            return
-        require(os.environ.get('RELEASE_AUTOMATION_ENABLED') == 'true')
         if not dispatch:
             complete_check(api, check['id'], 'failure', 'The base changed; waiting for release candidate validation.')
             outputs({'live': 'false'})
             return
-        proof = producer_evidence(api, event['inputs']['producer_run_id'], event['inputs']['producer_attempt'])
+        proof = producer_evidence(api, inputs['producer_run_id'], inputs['producer_attempt'])
         require(proof['pr'] == number)
         current = candidate(api, number, bot_id)
         require(all(current[key] == proof[key] for key in current))

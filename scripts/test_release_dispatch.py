@@ -107,22 +107,20 @@ class DispatchTests(unittest.TestCase):
     def test_superseded_base_push_cannot_create_a_check_on_new_release_head(self):
         api = mock.Mock()
         api.request.return_value = {'object': {'sha': 'f' * 40}}
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'event.json'
-            path.write_text('{}')
-            with mock.patch.dict(os.environ, {'GITHUB_EVENT_PATH': str(path), 'GITHUB_SHA': 'a' * 40,
-                                               'GITHUB_REF': 'refs/heads/coreweave'}), mock.patch.object(gate, 'outputs') as output:
-                gate.inspect(api, gate.GITHUB_ACTIONS_BOT_ID)
+        environment = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_SHA': 'a' * 40,
+                       'GITHUB_REF': 'refs/heads/coreweave', 'RELEASE_AUTOMATION_ENABLED': 'true'}
+        with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'outputs') as output:
+            gate.inspect(api, gate.GITHUB_ACTIONS_BOT_ID)
         output.assert_called_once_with({'live': 'false'})
         api.pages.assert_not_called()
         api.request.assert_called_once_with('/git/ref/heads/coreweave')
 
     def test_storage_dispatch_needs_matching_producer_before_live_output(self):
         candidate = {key: value for key, value in self.proof.items() if not key.startswith('producer_')}
-        pr = {'number': 7, 'head': {'sha': 'b' * 40, 'ref': self.proof['branch']},
-              'user': {'id': gate.GITHUB_ACTIONS_BOT_ID}, 'labels': []}
-        api = mock.Mock()
-        api.pages.return_value = []
+        pr = {'number': 7, 'state': 'open', 'base': {'ref': 'coreweave'},
+              'head': {'sha': 'b' * 40, 'ref': self.proof['branch'], 'repo': {'full_name': 'example/s5cmd'}},
+              'user': {'id': gate.GITHUB_ACTIONS_BOT_ID}}
+        api = mock.Mock(repository='example/s5cmd')
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'event.json'
             path.write_text(json.dumps({'inputs': {'pr': '7', 'producer_run_id': '21', 'producer_attempt': '1'}}))
@@ -140,17 +138,31 @@ class DispatchTests(unittest.TestCase):
             output.assert_not_called()
             self.assertEqual(api.request.call_args.args[2]['conclusion'], 'failure')
 
-    def test_automatic_release_pr_event_cannot_replace_explicit_gate(self):
+    def test_storage_gate_rejects_untrusted_events_and_refs(self):
         api = mock.Mock()
-        api.request.return_value = {'head': {'sha': 'b' * 40, 'ref': self.proof['branch']},
-                                    'user': {'id': gate.GITHUB_ACTIONS_BOT_ID}, 'labels': []}
+        for event, ref in [('pull_request', 'refs/pull/7/merge'),
+                           ('pull_request_target', 'refs/heads/coreweave'),
+                           ('workflow_dispatch', 'refs/heads/feature')]:
+            environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref, 'RELEASE_AUTOMATION_ENABLED': 'true'}
+            with self.subTest(event=event, ref=ref), mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
+                gate.inspect(api, gate.GITHUB_ACTIONS_BOT_ID)
+        api.request.assert_not_called()
+        api.pages.assert_not_called()
+
+    def test_storage_dispatch_does_not_write_checks_for_ordinary_prs(self):
+        api = mock.Mock(repository='example/s5cmd')
+        api.request.return_value = {
+            'state': 'open', 'base': {'ref': 'coreweave'}, 'user': {'id': 123},
+            'head': {'ref': 'feature', 'repo': {'full_name': 'example/s5cmd'}},
+        }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'event.json'
-            path.write_text(json.dumps({'pull_request': {'number': 7}}))
-            with mock.patch.dict(os.environ, {'GITHUB_EVENT_PATH': str(path), 'GITHUB_EVENT_NAME': 'pull_request_target'}), mock.patch.object(gate, 'outputs') as output:
+            path.write_text(json.dumps({'inputs': {'pr': '7'}}))
+            environment = {'GITHUB_EVENT_PATH': str(path), 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                           'GITHUB_REF': 'refs/heads/coreweave', 'RELEASE_AUTOMATION_ENABLED': 'true'}
+            with mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
                 gate.inspect(api, gate.GITHUB_ACTIONS_BOT_ID)
         api.request.assert_called_once_with('/pulls/7')
-        output.assert_called_once_with({'live': 'false'})
 
     def test_ci_check_names_cannot_substitute_for_a_trusted_complete_run(self):
         checks = [{'name': name, 'check_suite': {'id': 50}, 'app': {'slug': 'github-actions'},

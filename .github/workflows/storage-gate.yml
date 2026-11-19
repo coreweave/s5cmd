@@ -1,8 +1,5 @@
 name: Storage gate
 on:
-  pull_request_target:
-    branches: [coreweave]
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   push:
     branches: [coreweave]
   workflow_dispatch:
@@ -24,12 +21,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: storage-gate-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'event' }}-${{ inputs.pr || github.event.pull_request.number || github.ref }}
+  group: storage-gate-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'event' }}-${{ inputs.pr || github.ref }}
   cancel-in-progress: false
 
 jobs:
   inspect:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true'
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
       pull-requests: read
@@ -55,8 +53,8 @@ jobs:
 
   acceptance:
     needs: inspect
-    if: needs.inspect.outputs.live == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && needs.inspect.outputs.live == 'true'
+    runs-on: cw-static-pub-x64-4c
     timeout-minutes: 30
     environment: storage-acceptance
     permissions:
@@ -114,7 +112,7 @@ jobs:
   record:
     needs: [inspect, acceptance]
     if: always() && needs.inspect.outputs.live == 'true'
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
       pull-requests: read

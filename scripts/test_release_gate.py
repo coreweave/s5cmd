@@ -214,43 +214,35 @@ class ReleaseGateTests(unittest.TestCase):
         from pathlib import Path
         import os
         import tempfile
-        release = copy.deepcopy(self.pr)
         self.pr['number'] = 8
-        self.pr['user']['id'] = 456
-        self.pr['head']['ref'] = 'ordinary'
-        self.pr['head']['repo']['full_name'] = 'attacker/s5cmd'
-        self.pr['labels'] = []
+        self.pr['head']['repo']['full_name'] = 'fork/s5cmd'
         api = mock.Mock(repository='example/s5cmd')
         api.request.return_value = self.pr
-        api.pages.return_value = [release, self.pr]
         with tempfile.TemporaryDirectory() as directory:
             event = Path(directory) / 'event.json'
-            event.write_text(json.dumps({'pull_request': {'number': 8}}))
-            with mock.patch.dict(os.environ, {'GITHUB_EVENT_PATH': str(event), 'GITHUB_RUN_ID': '42'}), mock.patch.object(gate, 'outputs') as output:
+            event.write_text(json.dumps({'inputs': {'pr': '8'}}))
+            environment = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                           'GITHUB_REF': 'refs/heads/coreweave', 'RELEASE_AUTOMATION_ENABLED': 'true'}
+            with mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
                 gate.inspect(api, 123)
-        self.assertEqual(len(api.request.call_args_list), 1)
-        output.assert_called_once_with({'live': 'false'})
+        api.request.assert_called_once_with('/pulls/8')
+        api.pages.assert_not_called()
 
     def test_fork_release_name_cannot_suppress_base_push_invalidation(self):
         from unittest import mock
-        from pathlib import Path
         import os
-        import tempfile
         fake = copy.deepcopy(self.pr)
         fake['number'] = 8
         fake['user']['id'] = 456
-        fake['head']['repo']['full_name'] = 'attacker/s5cmd'
+        fake['head']['repo']['full_name'] = 'fork/s5cmd'
         api = mock.Mock(repository='example/s5cmd')
-        api.pages.side_effect = [[fake, self.pr], [], []]
+        api.pages.side_effect = [[fake, self.pr], []]
         api.request.side_effect = [{'object': {'sha': 'a' * 40}}, self.pr, {'id': 9, 'external_id': '42:1'}, None]
-        with tempfile.TemporaryDirectory() as directory:
-            event = Path(directory) / 'event.json'
-            event.write_text('{}')
-            environment = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_REF': 'refs/heads/coreweave',
-                           'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40,
-                           'RELEASE_AUTOMATION_ENABLED': 'true'}
-            with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'candidate', return_value=self.candidate()), mock.patch.object(gate, 'outputs') as output:
-                gate.inspect(api, 123)
+        environment = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/coreweave',
+                       'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40,
+                       'RELEASE_AUTOMATION_ENABLED': 'true'}
+        with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'outputs') as output:
+            gate.inspect(api, 123)
         self.assertEqual(output.call_args.args[0]['live'], 'false')
         self.assertEqual(api.request.call_args.args[2]['conclusion'], 'failure')
 
@@ -276,31 +268,17 @@ class ReleaseGateTests(unittest.TestCase):
                 gate.publication_tags(api)
             self.assertEqual(':latest' in output.call_args.args[0]['tags'], latest)
 
-    def test_inspection_never_enters_storage_for_ordinary_or_spoofed_pr(self):
+    def test_disabled_automation_cannot_inspect_or_write_checks(self):
         from unittest import mock
-        from pathlib import Path
         import os
-        import tempfile
         api = mock.Mock()
-        api.pages.return_value = []
-        self.pr['user']['id'] = 456
-        ordinary = copy.deepcopy(self.pr)
-        ordinary['head']['ref'] = 'feature'
-        ordinary['labels'] = []
-        with tempfile.TemporaryDirectory() as directory:
-            event = Path(directory) / 'event.json'
-            event.write_text(json.dumps({'pull_request': {'number': 7}}))
-            environment = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1', 'RELEASE_AUTOMATION_ENABLED': 'true'}
-            api.request.side_effect = [ordinary, {'id': 8, 'external_id': '42:1'}, None]
-            with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'outputs') as output:
+        for event in ('push', 'workflow_dispatch'):
+            environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/coreweave',
+                           'RELEASE_AUTOMATION_ENABLED': 'false'}
+            with self.subTest(event=event), mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
                 gate.inspect(api, 123)
-            output.assert_called_once_with({'live': 'false'})
-            api.request.side_effect = [self.pr, {'id': 8, 'external_id': '42:1'}, None]
-            environment['RELEASE_AUTOMATION_ENABLED'] = 'false'
-            with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'outputs') as output, self.assertRaises(ValueError):
-                gate.inspect(api, 123)
-            output.assert_not_called()
-            self.assertEqual(api.request.call_args.args[2]['conclusion'], 'failure')
+        api.request.assert_not_called()
+        api.pages.assert_not_called()
 
     def test_failed_suite_and_revision_change_cannot_record_success(self):
         from unittest import mock
