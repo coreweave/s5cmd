@@ -16,10 +16,13 @@ on:
         type: string
   pull_request:
     branches:
-      - "coreweave"
+      - main
+      # Keep CI available until the maintained branch is renamed.
+      - coreweave
   push:
     branches:
-      - "coreweave"
+      - main
+      - coreweave
 permissions:
   contents: read
 jobs:

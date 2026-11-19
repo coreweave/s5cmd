@@ -12,9 +12,9 @@ class ReleaseGateTests(unittest.TestCase):
         self.pr = {
             'number': 7, 'state': 'open', 'draft': False,
             'user': {'id': 123, 'type': 'Bot'},
-            'base': {'ref': 'coreweave', 'sha': 'a' * 40,
+            'base': {'ref': 'main', 'sha': 'a' * 40,
                      'repo': {'full_name': 'example/s5cmd'}},
-            'head': {'ref': 'release-please--branches--coreweave', 'sha': 'b' * 40,
+            'head': {'ref': 'release-please--branches--main', 'sha': 'b' * 40,
                      'repo': {'full_name': 'example/s5cmd'}},
             'labels': [{'name': 'autorelease: pending'}],
             'body': ':robot: I have created a release *beep* *boop*\n---\n\n## [2.4.0](https://example.com)\n\n---\nThis PR was generated with [Release Please](https://github.com/googleapis/release-please).',
@@ -36,6 +36,24 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(proof['tree'], 'd' * 40)
         self.assertEqual(proof['base'], 'a' * 40)
         self.assertEqual(proof['tag'], 'coreweave-v2.4.0')
+
+    def test_release_branch_names_follow_main_and_keep_the_component(self):
+        self.pr['head']['ref'] = 'release-please--branches--main--components--coreweave'
+        self.assertEqual(self.candidate()['tag'], 'coreweave-v2.4.0')
+
+        self.pr['head']['ref'] = 'release-please--branches--coreweave--components--coreweave'
+        with self.assertRaises(ValueError):
+            self.candidate()
+
+    def test_candidate_requires_main_as_the_default_branch(self):
+        from unittest import mock
+        api = mock.Mock()
+        for default in ('master', 'coreweave'):
+            api.reset_mock()
+            api.request.return_value = {'default_branch': default}
+            with self.subTest(default=default), self.assertRaises(ValueError):
+                gate.candidate(api, 7, 123)
+            api.request.assert_called_once_with('')
 
     def test_ordinary_pr_does_not_request_storage(self):
         self.pr['head']['ref'] = 'feature'
@@ -106,7 +124,7 @@ class ReleaseGateTests(unittest.TestCase):
         commit = {'sha': 'e' * 40, 'tree': {'sha': 'd' * 40},
                   'parents': [{'sha': 'a' * 40}]}
         run = {'id': 42, 'run_attempt': 1, 'path': '.github/workflows/storage-gate.yml',
-               'event': 'workflow_dispatch', 'head_branch': 'coreweave', 'status': 'completed',
+               'event': 'workflow_dispatch', 'head_branch': 'main', 'status': 'completed',
                'conclusion': 'success', 'head_sha': 'a' * 40,
                'repository': {'full_name': 'example/s5cmd'}}
         checks = [{'name': name, 'conclusion': 'success', 'status': 'completed',
@@ -130,6 +148,7 @@ class ReleaseGateTests(unittest.TestCase):
                    lambda p, pr, c, r, checks, reviews: checks[0].update(conclusion='skipped'),
                    lambda p, pr, c, r, checks, reviews: checks.pop(),
                    lambda p, pr, c, r, checks, reviews: r.update(event='pull_request'),
+                   lambda p, pr, c, r, checks, reviews: r.update(head_branch='coreweave'),
                    lambda p, pr, c, r, checks, reviews: reviews.clear(),
                    lambda p, pr, c, r, checks, reviews: reviews[0].update(author_association='NONE'),
                    lambda p, pr, c, r, checks, reviews: reviews[0].update(_may_approve=False),
@@ -222,7 +241,7 @@ class ReleaseGateTests(unittest.TestCase):
             event = Path(directory) / 'event.json'
             event.write_text(json.dumps({'inputs': {'pr': '8'}}))
             environment = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_EVENT_NAME': 'workflow_dispatch',
-                           'GITHUB_REF': 'refs/heads/coreweave', 'RELEASE_AUTOMATION_ENABLED': 'true'}
+                           'GITHUB_REF': 'refs/heads/main', 'RELEASE_AUTOMATION_ENABLED': 'true'}
             with mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
                 gate.inspect(api, 123)
         api.request.assert_called_once_with('/pulls/8')
@@ -238,7 +257,7 @@ class ReleaseGateTests(unittest.TestCase):
         api = mock.Mock(repository='example/s5cmd')
         api.pages.side_effect = [[fake, self.pr], []]
         api.request.side_effect = [{'object': {'sha': 'a' * 40}}, self.pr, {'id': 9, 'external_id': '42:1'}, None]
-        environment = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/coreweave',
+        environment = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/main',
                        'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40,
                        'RELEASE_AUTOMATION_ENABLED': 'true'}
         with mock.patch.dict(os.environ, environment), mock.patch.object(gate, 'outputs') as output:
@@ -273,7 +292,7 @@ class ReleaseGateTests(unittest.TestCase):
         import os
         api = mock.Mock()
         for event in ('push', 'workflow_dispatch'):
-            environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/coreweave',
+            environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/main',
                            'RELEASE_AUTOMATION_ENABLED': 'false'}
             with self.subTest(event=event), mock.patch.dict(os.environ, environment), self.assertRaises(ValueError):
                 gate.inspect(api, 123)

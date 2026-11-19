@@ -16,9 +16,12 @@ import urllib.request
 
 from oidc_credentials import NoRedirect
 
+TARGET_BRANCH = 'main'
+TARGET_REF = f'refs/heads/{TARGET_BRANCH}'
+TARGET_REF_PATH = f'/git/ref/heads/{TARGET_BRANCH}'
 RELEASE_FILES = {'CHANGELOG.md', '.release-please-manifest.json', 'version.txt'}
-RELEASE_BRANCHES = {'release-please--branches--coreweave',
-                    'release-please--branches--coreweave--components--coreweave'}
+RELEASE_BRANCHES = {f'release-please--branches--{TARGET_BRANCH}',
+                    f'release-please--branches--{TARGET_BRANCH}--components--coreweave'}
 GATE = 'storage-acceptance'
 # GitHub signs API-created commits for the built-in Actions bot.
 GITHUB_ACTIONS_BOT_ID = 41898282
@@ -56,7 +59,7 @@ def claims_release(pr, bot_id):
 def verify_candidate(pr, files, commits, manifest, version_text, previous,
                      merge, head_commit, repository, bot_id):
     require(bot_id > 0 and pr['user']['id'] == bot_id and pr['user']['type'] == 'Bot')
-    require(pr['base']['ref'] == 'coreweave' and not pr['draft'])
+    require(pr['base']['ref'] == TARGET_BRANCH and not pr['draft'])
     require(pr['base']['repo']['full_name'] == repository == pr['head']['repo']['full_name'])
     require(pr['head']['ref'] in RELEASE_BRANCHES)
     require(any(label['name'] in ('autorelease: pending', 'autorelease: tagged') for label in pr['labels']))
@@ -84,14 +87,14 @@ def verify_candidate(pr, files, commits, manifest, version_text, previous,
 def verify_publication(proof, pr, commit, run, checks, reviews, repository, bot_id, evidence):
     require(proof == evidence)
     require(pr['merged'] and pr['state'] == 'closed' and pr['user']['id'] == bot_id)
-    require(pr['base']['ref'] == 'coreweave' and pr['head']['repo']['full_name'] == repository)
+    require(pr['base']['ref'] == TARGET_BRANCH and pr['head']['repo']['full_name'] == repository)
     require(proof['pr'] == pr['number'] and proof['head'] == pr['head']['sha'])
     require(commit['sha'] == pr['merge_commit_sha'] and commit['tree']['sha'] == proof['tree'])
     require(commit['parents'] and commit['parents'][0]['sha'] == proof['base'])
     require(run['id'] == proof['run_id'] and run['repository']['full_name'] == repository)
     require(run['run_attempt'] == proof['run_attempt'])
     require(run['path'] == '.github/workflows/storage-gate.yml' and
-            run['event'] == 'workflow_dispatch' and run['head_branch'] == 'coreweave' and run['head_sha'] == proof['base'] and
+            run['event'] == 'workflow_dispatch' and run['head_branch'] == TARGET_BRANCH and run['head_sha'] == proof['base'] and
             run['status'] == 'completed' and run['conclusion'] == 'success')
     latest = {check['name']: check for check in checks if check['app']['slug'] == 'github-actions'}
     require(all(name in latest and latest[name]['status'] == 'completed' and
@@ -158,10 +161,10 @@ def outputs(values):
 
 
 def candidate(api, number, bot_id):
-    require(api.request('')['default_branch'] == 'coreweave')
+    require(api.request('')['default_branch'] == TARGET_BRANCH)
     pr = api.request(f'/pulls/{number}')
     require(pr['state'] == 'open')
-    base = api.request('/git/ref/heads/coreweave')['object']['sha']
+    base = api.request(TARGET_REF_PATH)['object']['sha']
     require(base == pr['base']['sha'])
     merge_ref = sha(pr['merge_commit_sha'])
     proof = verify_candidate(pr, api.pages(f'/pulls/{number}/files'),
@@ -201,8 +204,8 @@ def capture_candidate(api, bot_id):
 
 
 def release_tip(api):
-    require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
-    current = api.request('/git/ref/heads/coreweave')['object']['sha'] == os.environ['GITHUB_SHA']
+    require(os.environ['GITHUB_REF'] == TARGET_REF)
+    current = api.request(TARGET_REF_PATH)['object']['sha'] == os.environ['GITHUB_SHA']
     outputs({'current': 'true' if current else 'false'})
     if not current:
         print('Release PR refresh skipped because newer commits are present.')
@@ -211,7 +214,7 @@ def release_tip(api):
 def verify_producer(proof, run, jobs, repository):
     require(run['id'] == proof['producer_run_id'] and run['run_attempt'] == proof['producer_attempt'])
     require(run['repository']['full_name'] == repository and run['head_sha'] == proof['base'] and
-            run['head_branch'] == 'coreweave' and run['path'] == '.github/workflows/release.yml' and
+            run['head_branch'] == TARGET_BRANCH and run['path'] == '.github/workflows/release.yml' and
             run['event'] in ('push', 'workflow_dispatch'))
     producers = [job for job in jobs if job['name'] == 'release-please']
     require(len(producers) == 1 and producers[0]['conclusion'] == 'success')
@@ -260,7 +263,7 @@ def dispatch_validation(api, bot_id):
         'ref': proof['branch'],
         'inputs': dict(inputs, expected_head=proof['head'])})
     api.request('/actions/workflows/storage-gate.yml/dispatches', 'POST', {
-        'ref': 'coreweave', 'inputs': dict(inputs, pr=str(proof['pr']))})
+        'ref': TARGET_BRANCH, 'inputs': dict(inputs, pr=str(proof['pr']))})
 
 
 def ci_preflight(api, bot_id):
@@ -306,23 +309,23 @@ def gate_uses_current_base(api, head):
     run_id, attempt = identifier.split(':')
     run = api.request(f'/actions/runs/{run_id}/attempts/{attempt}')
     return (run['path'] == '.github/workflows/storage-gate.yml' and run['event'] == 'workflow_dispatch' and
-            run['head_sha'] == os.environ['GITHUB_SHA'] and run['head_branch'] == 'coreweave')
+            run['head_sha'] == os.environ['GITHUB_SHA'] and run['head_branch'] == TARGET_BRANCH)
 
 
 def inspect(api, bot_id):
     event_name = os.environ['GITHUB_EVENT_NAME']
     require(event_name in ('push', 'workflow_dispatch'))
-    require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
+    require(os.environ['GITHUB_REF'] == TARGET_REF)
     require(os.environ.get('RELEASE_AUTOMATION_ENABLED') == 'true')
     dispatch = event_name == 'workflow_dispatch'
     if dispatch:
         inputs = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']
         number = int(inputs['pr'])
     else:
-        if api.request('/git/ref/heads/coreweave')['object']['sha'] != os.environ['GITHUB_SHA']:
+        if api.request(TARGET_REF_PATH)['object']['sha'] != os.environ['GITHUB_SHA']:
             outputs({'live': 'false'})
             return
-        prs = [pr for pr in api.pages('/pulls?state=open&base=coreweave')
+        prs = [pr for pr in api.pages(f'/pulls?state=open&base={TARGET_BRANCH}')
                if pr['user']['id'] == bot_id and pr['head']['ref'] in RELEASE_BRANCHES and
                (pr['head']['repo'] or {}).get('full_name') == api.repository]
         require(len(prs) <= 1)
@@ -331,7 +334,7 @@ def inspect(api, bot_id):
             return
         number = prs[0]['number']
     pr = api.request(f'/pulls/{number}')
-    require(pr['state'] == 'open' and pr['base']['ref'] == 'coreweave' and
+    require(pr['state'] == 'open' and pr['base']['ref'] == TARGET_BRANCH and
             pr['user']['id'] == bot_id and pr['head']['ref'] in RELEASE_BRANCHES and
             (pr['head']['repo'] or {}).get('full_name') == api.repository)
     head = sha(pr['head']['sha'])
@@ -419,10 +422,10 @@ def acceptance_evidence(api, run_id, attempt):
 
 
 def publication_plan(api, bot_id):
-    require(os.environ['GITHUB_REF'] == 'refs/heads/coreweave')
+    require(os.environ['GITHUB_REF'] == TARGET_REF)
     commit_sha = sha(os.environ['GITHUB_SHA'])
     prs = [pr for pr in api.pages(f'/commits/{commit_sha}/pulls')
-           if pr.get('merged_at') and pr['base']['ref'] == 'coreweave' and
+           if pr.get('merged_at') and pr['base']['ref'] == TARGET_BRANCH and
            pr['merge_commit_sha'] == commit_sha]
     require(len(prs) <= 1)
     if not prs or not claims_release(prs[0], bot_id):
@@ -489,7 +492,7 @@ def finalize_release(api):
     release = api.request('/releases/' + str(int(os.environ['RELEASE_ID'])))
     require(release['tag_name'] == tag)
     require(api.request('/git/ref/tags/' + tag)['object']['sha'] == sha(plan['commit']))
-    latest = api.content('version.txt', api.request('/git/ref/heads/coreweave')['object']['sha']).strip() == plan['version']
+    latest = api.content('version.txt', api.request(TARGET_REF_PATH)['object']['sha']).strip() == plan['version']
     api.request(f'/releases/{release["id"]}', 'PATCH', {'draft': False, 'make_latest': 'true' if latest else 'false'})
     number = int(plan['pr'])
     api.request(f'/issues/{number}/labels', 'POST', {'labels': ['autorelease: tagged']})
@@ -511,7 +514,7 @@ def publication_tags(api):
     require(plan['tag'] == 'coreweave-v' + plan['version'])
     prefix = 'ghcr.io/' + api.repository + ':'
     tags = [prefix + plan['tag'], prefix + sha(plan['commit'])]
-    current = api.request('/git/ref/heads/coreweave')['object']['sha']
+    current = api.request(TARGET_REF_PATH)['object']['sha']
     if api.content('version.txt', current).strip() == plan['version']:
         tags.append(prefix + 'latest')
     outputs({'tags': ','.join(tags)})

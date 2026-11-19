@@ -1,7 +1,7 @@
 name: Storage gate
 on:
   push:
-    branches: [coreweave]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pr:
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   inspect:
-    if: github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && vars.RELEASE_AUTOMATION_ENABLED == 'true'
     runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
