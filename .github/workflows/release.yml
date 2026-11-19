@@ -14,7 +14,7 @@ concurrency:
 jobs:
   authorize:
     if: github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
       pull-requests: read
@@ -40,7 +40,7 @@ jobs:
   publish:
     needs: authorize
     if: needs.authorize.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     timeout-minutes: 45
     environment: release
     permissions:
@@ -111,7 +111,7 @@ jobs:
   release-please:
     needs: [authorize, publish]
     if: always() && github.ref == 'refs/heads/coreweave' && vars.RELEASE_AUTOMATION_ENABLED == 'true' && needs.authorize.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: write
       pull-requests: write
@@ -157,7 +157,7 @@ jobs:
   dispatch-validation:
     needs: release-please
     if: always() && needs.release-please.result == 'success' && needs.release-please.outputs.candidate == 'true'
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
       pull-requests: read

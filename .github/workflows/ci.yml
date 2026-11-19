@@ -24,7 +24,7 @@ permissions:
   contents: read
 jobs:
   release-preflight:
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     permissions:
       contents: read
       pull-requests: read
@@ -49,13 +49,20 @@ jobs:
           - 1.22.x
           - 1.21.x
           - 1.20.x
-        os:
-          - macos
-          - ubuntu
-          - windows
+        os: [macos, ubuntu, windows]
+        include:
+          - os: macos
+            goos: darwin
+            goarch: arm64
+          - os: ubuntu
+            goos: linux
+            goarch: amd64
+          - os: windows
+            goos: windows
+            goarch: amd64
 
     name: build (${{ matrix.os }}/go-${{ matrix.go-version }})
-    runs-on: ${{ matrix.os }}-latest
+    runs-on: cw-static-pub-x64-4c
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -65,6 +72,10 @@ jobs:
         go-version: ${{ matrix.go-version }}
 
     - run: make build
+      env:
+        CGO_ENABLED: '0'
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
 
   test:
     needs: release-preflight
@@ -74,15 +85,8 @@ jobs:
           - 1.22.x
           - 1.21.x
           - 1.20.x
-        os:
-          - macos
-          - ubuntu
-          - windows
-
-    name: test (${{ matrix.os }}/go-${{ matrix.go-version }})
-    runs-on: ${{ matrix.os }}-latest
-    env:
-      GOFLAGS: ${{ matrix.os == 'macos' && '-ldflags=-linkmode=external' || '' }}
+    name: test (ubuntu/go-${{ matrix.go-version }})
+    runs-on: cw-static-pub-x64-4c
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -92,29 +96,26 @@ jobs:
         go-version: ${{ matrix.go-version }}
 
     - name: Build pinned local test storage
-      if: matrix.os == 'ubuntu'
       run: GOBIN="$RUNNER_TEMP/minio-bin" go install github.com/minio/minio@0120ff93bc4b9cfaf2865e55850e9b20e5ef703d # RELEASE.2023-07-18T17-49-40Z
     - name: Run tests
       shell: bash
       run: |
-        if [ -n "$S5CMD_TEST_ENDPOINT_URL" ]; then
-          "$RUNNER_TEMP/minio-bin/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:45677 >"$RUNNER_TEMP/minio.log" 2>&1 &
-          minio_pid=$!
-          trap 'kill "$minio_pid" 2>/dev/null || true; wait "$minio_pid" 2>/dev/null || true' EXIT
-          for ((attempt=0; attempt<30; attempt++)); do
-            if curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          if ! curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
-            echo 'Local test storage did not become healthy.'
-            exit 1
+        "$RUNNER_TEMP/minio-bin/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:45677 >"$RUNNER_TEMP/minio.log" 2>&1 &
+        minio_pid=$!
+        trap 'kill "$minio_pid" 2>/dev/null || true; wait "$minio_pid" 2>/dev/null || true' EXIT
+        for ((attempt=0; attempt<30; attempt++)); do
+          if curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
+            break
           fi
+          sleep 1
+        done
+        if ! curl --fail --silent --max-time 2 "$S5CMD_TEST_ENDPOINT_URL/minio/health/live" >/dev/null; then
+          echo 'Local test storage did not become healthy.'
+          exit 1
         fi
         make test
       env:
-        S5CMD_TEST_ENDPOINT_URL: ${{ (matrix.os == 'ubuntu') && 'http://localhost:45677' || '' }}
+        S5CMD_TEST_ENDPOINT_URL: http://localhost:45677
         MINIO_ROOT_USER: minioadmin
         MINIO_ROOT_PASSWORD: minioadmin
   qa:
@@ -125,10 +126,8 @@ jobs:
           - 1.22.x
           - 1.21.x
           - 1.20.x
-        os:
-          - ubuntu
-
-    runs-on: ${{ matrix.os }}-latest
+    name: qa (${{ matrix.go-version }}, ubuntu)
+    runs-on: cw-static-pub-x64-4c
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -147,7 +146,7 @@ jobs:
 
   credential-helper:
     needs: release-preflight
-    runs-on: ubuntu-latest
+    runs-on: cw-static-pub-x64-4c
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
