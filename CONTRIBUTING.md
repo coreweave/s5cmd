@@ -16,13 +16,7 @@ This document is a guide for developers interested in contributing to `s5cmd`.
 
 To download the source code of `s5cmd` you will need `git`. There are multiple ways of installing `git` depending on your operating system. This [document](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) is a good starting point if you don't have `git` installed already.
 
-Before proposing a change you first need to fork the `s5cmd` Github repository. For a detailed overview on forking, please take a look at the [Github documentation on forking](https://docs.github.com/en/get-started/quickstart/fork-a-repo). In short you need to:
- - fork the `peak/s5cmd` repository
- - clone your fork to your local development environment
- - checkout a new git branch for your proposed changes
- - push changes to your fork
- - open a pull request to `peak/s5cmd`
-
+Clone `coreweave/s5cmd`, create a branch for your changes, and push it to the repository. Pull request creation is limited to collaborators.
 
 ## Testing
 
@@ -62,16 +56,6 @@ While adding your changes and testing your changes, it would be good to remember
 
 ## Submitting a Pull Request
 
-For this fork, target the `coreweave` branch. CI runs build, test, and QA checks for pull requests and merges into that branch. Merging a pull request does not automatically tag or publish a release.
+Target `main` in `coreweave/s5cmd`. CI runs build, test, and QA checks for pull requests and merges into that branch. The CI matrix runs tests on Linux and builds binaries for Linux, macOS, and Windows. Ordinary merges update the release PR when release automation is active.
 
 Release PRs use Conventional Commits and require protected storage acceptance before publication. See [release setup and operation](doc/releases.md).
-
-Once you add your changes and all the tests/checks pass, you can submit your pull request to the `peak/s5cmd` repository. Github will trigger automated tests in Github Actions. All tests and checks will be run on different operating systems including `linux`, `macos` and `windows`. 
-
-An `s5cmd` maintainer will review your pull request. They may suggest updates for clarity and style, or request additional unit or integration tests. 
-
-Once all the tests are green and your pull request has been approved, an `s5cmd` maintainer will merge your changes into the `master` branch. And your changes will be released with the next release of `s5cmd`.
-
-That's it. 
-
-🎉 Happy coding! 🎉
