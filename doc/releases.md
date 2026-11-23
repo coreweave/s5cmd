@@ -8,15 +8,15 @@ Ordinary merges update the release PR and do not publish. Only the merge of a ve
 
 1. Give `@coreweave/cloud-platform-api-team` explicit write access and verify GitHub accepts `main`'s `.github/CODEOWNERS`. Follow the [default branch cutover](#default-branch-cutover) if the maintained branch still needs to move to `main`.
 2. Confirm PR creation is set to **Collaborators only**, fork workflows require approval for all external contributors, and the default workflow token is read-only. Enable the setting that requires full-length commit SHAs for actions.
-3. Coordinate retirement of the legacy workflow definitions on `master` before requesting public runner access. Block creation, update, and deletion of legacy `v*` tags because historical commits include upstream publishing workflows.
-4. After runner access is granted, verify the ordinary PR checks on `cw-static-pub-x64-4c`. CI builds Linux amd64, macOS arm64, and Windows amd64 and runs tests on Linux. Update the required checks to match [`ci.yml`](../.github/workflows/ci.yml). Require Code Owner approval, stale-approval dismissal, and up-to-date branches on `main`. Disable force pushes and protection bypasses.
+3. Name workflow files `cw-*.yml` or `cw-*.yaml` under `.github/workflows` to match the repository's Actions policy. Retire legacy workflow definitions on the former upstream branch before requesting public runner access. Block creation, update, and deletion of legacy `v*` tags because historical commits include upstream publishing workflows.
+4. After runner access is granted, verify the ordinary PR checks on `cw-static-pub-x64-4c`. CI builds Linux amd64, macOS arm64, and Windows amd64 and runs tests on Linux. Update the required checks to match [`cw-ci.yml`](../.github/workflows/cw-ci.yml). Require Code Owner approval, stale-approval dismissal, and up-to-date branches on `main`. Disable force pushes and protection bypasses.
 
 ## Default branch cutover
 
 1. Resolve any in-flight release or merged-but-unpublished release before the cutover. Keep `RELEASE_AUTOMATION_ENABLED` unset during the move. Have Release Please regenerate any pending release PR against `main` when automation is ready. Release evidence is specific to the branch and revision that produced it.
 2. Merge the branch migration PR into the current maintained branch, `coreweave`. Ordinary CI covers PRs and pushes on that branch during the transition. The release and live storage workflows require `main` to be the default branch.
 3. Have a GitHub administrator rename the maintained branch from `coreweave` to `main`, then set `main` as the default. Verify CODEOWNERS and the effective rules for `main`, including any rulesets with an explicit branch name. Update any branch-scoped deployment or federation policies for `main` before enabling releases. Keep the environments scoped to the trusted branch and verify the actual OIDC subject before allowing exchange.
-4. After runner access is granted, run ordinary PR CI against `main`. Once the cutover is verified, remove the temporary `coreweave` entries from `ci.yml`. Preserve the `coreweave` release component in `release-please-config.json` to keep the `coreweave-v*` version tags.
+4. After runner access is granted, run ordinary PR CI against `main`. Once the cutover is verified, remove the temporary `coreweave` entries from `cw-ci.yml`. Preserve the `coreweave` release component in `release-please-config.json` to keep the `coreweave-v*` version tags.
 
 ## Release administrator setup
 

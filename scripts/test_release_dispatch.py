@@ -19,7 +19,7 @@ class DispatchTests(unittest.TestCase):
                       'producer_run_id': 21, 'producer_attempt': 1}
         self.run = {'id': 21, 'run_attempt': 1, 'head_sha': 'a' * 40,
                     'head_branch': 'main', 'event': 'push',
-                    'path': '.github/workflows/release.yml',
+                    'path': '.github/workflows/cw-release.yml',
                     'repository': {'full_name': 'example/s5cmd'}}
         self.jobs = [{'name': 'release-please', 'conclusion': 'success', 'steps': [
             {'name': name, 'conclusion': 'success'} for name in
@@ -28,7 +28,7 @@ class DispatchTests(unittest.TestCase):
     def test_producer_requires_exact_trusted_source_and_successful_steps(self):
         gate.verify_producer(self.proof, self.run, self.jobs, 'example/s5cmd')
         for field, value in [('head_sha', 'f' * 40), ('head_branch', 'feature'), ('head_branch', 'coreweave'),
-                             ('event', 'pull_request'), ('path', '.github/workflows/ci.yml'),
+                             ('event', 'pull_request'), ('path', '.github/workflows/release.yml'),
                              ('run_attempt', 2), ('id', 22)]:
             run = dict(self.run, **{field: value})
             with self.subTest(field=field), self.assertRaises(ValueError):
@@ -44,7 +44,7 @@ class DispatchTests(unittest.TestCase):
         with mock.patch.object(gate, 'producer_evidence', return_value=self.proof), mock.patch.object(gate, 'candidate', return_value={k: v for k, v in self.proof.items() if not k.startswith('producer_')}), mock.patch.dict(os.environ, {'PRODUCER_RUN_ID': '21', 'PRODUCER_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}):
             gate.dispatch_validation(api, gate.GITHUB_ACTIONS_BOT_ID)
         self.assertEqual([call.args[0] for call in api.request.call_args_list],
-                         ['/actions/workflows/ci.yml/dispatches', '/actions/workflows/storage-gate.yml/dispatches'])
+                         ['/actions/workflows/cw-ci.yml/dispatches', '/actions/workflows/cw-storage-gate.yml/dispatches'])
         self.assertEqual(api.request.call_args_list[0].args[2]['inputs']['expected_head'], 'b' * 40)
         self.assertEqual(api.request.call_args_list[1].args[2]['ref'], 'main')
         stale = dict(self.proof, head='f' * 40)
@@ -96,13 +96,15 @@ class DispatchTests(unittest.TestCase):
         api = mock.Mock()
         api.pages.return_value = [{'name': gate.GATE, 'id': 7, 'app': {'slug': 'github-actions'},
                                    'external_id': '42:1'}]
-        api.request.return_value = {'path': '.github/workflows/storage-gate.yml',
-                                    'event': 'workflow_dispatch', 'head_sha': 'a' * 40, 'head_branch': 'main'}
+        run = {'path': '.github/workflows/cw-storage-gate.yml', 'event': 'workflow_dispatch',
+               'head_sha': 'a' * 40, 'head_branch': 'main'}
+        api.request.return_value = run
         with mock.patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}):
             self.assertTrue(gate.gate_uses_current_base(api, 'b' * 40))
-        api.request.return_value['head_sha'] = 'f' * 40
-        with mock.patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}):
-            self.assertFalse(gate.gate_uses_current_base(api, 'b' * 40))
+            for change in (dict(head_sha='f' * 40), dict(path='.github/workflows/storage-gate.yml')):
+                with self.subTest(change=change):
+                    api.request.return_value = dict(run, **change)
+                    self.assertFalse(gate.gate_uses_current_base(api, 'b' * 40))
 
     def test_superseded_base_push_cannot_create_a_check_on_new_release_head(self):
         api = mock.Mock()
@@ -168,7 +170,7 @@ class DispatchTests(unittest.TestCase):
     def test_ci_check_names_cannot_substitute_for_a_trusted_complete_run(self):
         checks = [{'name': name, 'check_suite': {'id': 50}, 'app': {'slug': 'github-actions'},
                    'status': 'completed', 'conclusion': 'success'} for name in gate.CI_CHECKS]
-        run = {'id': 60, 'run_attempt': 1, 'path': '.github/workflows/ci.yml',
+        run = {'id': 60, 'run_attempt': 1, 'path': '.github/workflows/cw-ci.yml',
                'event': 'workflow_dispatch', 'head_sha': 'b' * 40, 'status': 'completed',
                'conclusion': 'success', 'repository': {'full_name': 'example/s5cmd'}}
         jobs = [{'name': 'release-preflight', 'conclusion': 'success', 'steps': [
@@ -185,7 +187,7 @@ class DispatchTests(unittest.TestCase):
             if change == 'head':
                 changed_run['head_sha'] = 'f' * 40
             elif change == 'path':
-                changed_run['path'] = '.github/workflows/other.yml'
+                changed_run['path'] = '.github/workflows/ci.yml'
             else:
                 changed_jobs[0]['steps'][0]['conclusion'] = 'skipped'
             api.pages.side_effect = [[changed_run], changed_jobs]

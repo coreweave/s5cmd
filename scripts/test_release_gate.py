@@ -123,7 +123,7 @@ class ReleaseGateTests(unittest.TestCase):
         merged.update(state='closed', merged=True, merge_commit_sha='e' * 40)
         commit = {'sha': 'e' * 40, 'tree': {'sha': 'd' * 40},
                   'parents': [{'sha': 'a' * 40}]}
-        run = {'id': 42, 'run_attempt': 1, 'path': '.github/workflows/storage-gate.yml',
+        run = {'id': 42, 'run_attempt': 1, 'path': '.github/workflows/cw-storage-gate.yml',
                'event': 'workflow_dispatch', 'head_branch': 'main', 'status': 'completed',
                'conclusion': 'success', 'head_sha': 'a' * 40,
                'repository': {'full_name': 'example/s5cmd'}}
@@ -149,6 +149,7 @@ class ReleaseGateTests(unittest.TestCase):
                    lambda p, pr, c, r, checks, reviews: checks.pop(),
                    lambda p, pr, c, r, checks, reviews: r.update(event='pull_request'),
                    lambda p, pr, c, r, checks, reviews: r.update(head_branch='coreweave'),
+                   lambda p, pr, c, r, checks, reviews: r.update(path='.github/workflows/storage-gate.yml'),
                    lambda p, pr, c, r, checks, reviews: reviews.clear(),
                    lambda p, pr, c, r, checks, reviews: reviews[0].update(author_association='NONE'),
                    lambda p, pr, c, r, checks, reviews: reviews[0].update(_may_approve=False),

@@ -93,7 +93,7 @@ def verify_publication(proof, pr, commit, run, checks, reviews, repository, bot_
     require(commit['parents'] and commit['parents'][0]['sha'] == proof['base'])
     require(run['id'] == proof['run_id'] and run['repository']['full_name'] == repository)
     require(run['run_attempt'] == proof['run_attempt'])
-    require(run['path'] == '.github/workflows/storage-gate.yml' and
+    require(run['path'] == '.github/workflows/cw-storage-gate.yml' and
             run['event'] == 'workflow_dispatch' and run['head_branch'] == TARGET_BRANCH and run['head_sha'] == proof['base'] and
             run['status'] == 'completed' and run['conclusion'] == 'success')
     latest = {check['name']: check for check in checks if check['app']['slug'] == 'github-actions'}
@@ -214,7 +214,7 @@ def release_tip(api):
 def verify_producer(proof, run, jobs, repository):
     require(run['id'] == proof['producer_run_id'] and run['run_attempt'] == proof['producer_attempt'])
     require(run['repository']['full_name'] == repository and run['head_sha'] == proof['base'] and
-            run['head_branch'] == TARGET_BRANCH and run['path'] == '.github/workflows/release.yml' and
+            run['head_branch'] == TARGET_BRANCH and run['path'] == '.github/workflows/cw-release.yml' and
             run['event'] in ('push', 'workflow_dispatch'))
     producers = [job for job in jobs if job['name'] == 'release-please']
     require(len(producers) == 1 and producers[0]['conclusion'] == 'success')
@@ -259,10 +259,10 @@ def dispatch_validation(api, bot_id):
     require(proof['base'] == os.environ['GITHUB_SHA'])
     inputs = {'producer_run_id': str(proof['producer_run_id']),
               'producer_attempt': str(proof['producer_attempt'])}
-    api.request('/actions/workflows/ci.yml/dispatches', 'POST', {
+    api.request('/actions/workflows/cw-ci.yml/dispatches', 'POST', {
         'ref': proof['branch'],
         'inputs': dict(inputs, expected_head=proof['head'])})
-    api.request('/actions/workflows/storage-gate.yml/dispatches', 'POST', {
+    api.request('/actions/workflows/cw-storage-gate.yml/dispatches', 'POST', {
         'ref': TARGET_BRANCH, 'inputs': dict(inputs, pr=str(proof['pr']))})
 
 
@@ -281,7 +281,7 @@ def ci_evidence(api, proof, checks):
     runs = api.pages(f'/actions/runs?check_suite_id={suites.pop()}', 'workflow_runs')
     require(len(runs) == 1)
     run = runs[0]
-    require(run['path'] == '.github/workflows/ci.yml' and run['event'] == 'workflow_dispatch' and
+    require(run['path'] == '.github/workflows/cw-ci.yml' and run['event'] == 'workflow_dispatch' and
             run['head_sha'] == proof['head'] and run['repository']['full_name'] == api.repository and
             run['status'] == 'completed' and run['conclusion'] == 'success')
     jobs = api.pages(f'/actions/runs/{int(run["id"])}/attempts/{int(run["run_attempt"])}/jobs', 'jobs')
@@ -308,7 +308,7 @@ def gate_uses_current_base(api, head):
         return False
     run_id, attempt = identifier.split(':')
     run = api.request(f'/actions/runs/{run_id}/attempts/{attempt}')
-    return (run['path'] == '.github/workflows/storage-gate.yml' and run['event'] == 'workflow_dispatch' and
+    return (run['path'] == '.github/workflows/cw-storage-gate.yml' and run['event'] == 'workflow_dispatch' and
             run['head_sha'] == os.environ['GITHUB_SHA'] and run['head_branch'] == TARGET_BRANCH)
 
 

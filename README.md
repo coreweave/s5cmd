@@ -1,4 +1,4 @@
-[![Go Report](https://goreportcard.com/badge/github.com/peak/s5cmd/v2)](https://goreportcard.com/report/github.com/peak/s5cmd/v2) ![Github Actions Status](https://github.com/peak/s5cmd/actions/workflows/ci.yml/badge.svg)
+[![Go Report](https://goreportcard.com/badge/github.com/peak/s5cmd/v2)](https://goreportcard.com/report/github.com/peak/s5cmd/v2) ![Github Actions Status](https://github.com/coreweave/s5cmd/actions/workflows/cw-ci.yml/badge.svg?branch=main)
 
 ![](./doc/s5cmd_header.jpg)
 
